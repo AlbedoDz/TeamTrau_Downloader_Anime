@@ -21,3 +21,13 @@ Desktop.ini
 # Runtime logs
 logs/
 
+# Large Binaries & Media / Downloads
+ffmpeg/*.exe
+yt-dlp/*.exe
+downloads/
+*.zip
+*.egg-info/
+.codegraph/
+.context-builder/
+
+
