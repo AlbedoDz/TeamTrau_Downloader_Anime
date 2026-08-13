@@ -147,6 +147,123 @@
         return 'Sub';
     }
 
+    // Helper: Convert VTT format to SRT format
+    function convertVttToSrt(vttText) {
+        if (!vttText) return '';
+        
+        // Normalize line breaks
+        const cleanText = vttText.trim().replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+        const lines = cleanText.split('\n');
+        
+        let parsedCues = [];
+        let currentCue = null;
+        let insideHeader = true;
+
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i].trim();
+            
+            // 1. Skip WEBVTT header metadata, NOTE comments, or STYLE blocks fully
+            if (insideHeader) {
+                if (line.startsWith('WEBVTT') || line.startsWith('NOTE') || line.startsWith('STYLE') || line.startsWith('REGION')) {
+                    continue;
+                }
+                if (line.includes('-->')) {
+                    insideHeader = false;
+                } else if (line === '') {
+                    continue;
+                } else {
+                    if (line.includes(':') && !/^\d+$/.test(line)) {
+                        continue;
+                    }
+                }
+            }
+            
+            // Check if it's a timestamp line e.g. "00:12.890 --> 00:17.020"
+            const timestampMatch = line.match(/^(\d{2}:)?(\d{2}):(\d{2})[.,](\d{3})\s*-->\s*(\d{2}:)?(\d{2}):(\d{2})[.,](\d{3})/);
+            
+            if (timestampMatch) {
+                // If there's a pending cue, save it
+                if (currentCue) {
+                    parsedCues.push(currentCue);
+                }
+                
+                // Construct standard SRT timestamps: HH:MM:SS,mmm
+                let startH = timestampMatch[1] ? timestampMatch[1].replace(':', '') : '00';
+                let startM = timestampMatch[2];
+                let startS = timestampMatch[3];
+                let startMs = timestampMatch[4];
+                
+                let endH = timestampMatch[5] ? timestampMatch[5].replace(':', '') : '00';
+                let endM = timestampMatch[6];
+                let endS = timestampMatch[7];
+                let endMs = timestampMatch[8];
+                
+                const formattedTime = `${startH}:${startM}:${startS},${startMs} --> ${endH}:${endM}:${endS},${endMs}`;
+                
+                currentCue = {
+                    time: formattedTime,
+                    text: []
+                };
+            } else if (line === '') {
+                if (currentCue && currentCue.text.length > 0) {
+                    parsedCues.push(currentCue);
+                    currentCue = null;
+                }
+            } else {
+                if (currentCue) {
+                    const cleanedLine = line.replace(/<[^>]+>/g, (tag) => {
+                        return /<\/?(i|b|u)>/i.test(tag) ? tag : '';
+                    });
+                    
+                    if (/^\d+$/.test(cleanedLine) && currentCue.text.length === 0) {
+                        continue;
+                    }
+                    currentCue.text.push(cleanedLine);
+                }
+            }
+        }
+        
+        if (currentCue) {
+            parsedCues.push(currentCue);
+        }
+
+        // Build final SRT output string
+        let srtOutput = [];
+        let cueIndex = 1;
+        for (const cue of parsedCues) {
+            if (cue.text.length === 0) continue;
+            let cueLines = cue.text;
+            
+            // Clean styling tags entirely to match Reference file (pure plain-text srt)
+            for (let t = 0; t < cueLines.length; t++) {
+                cueLines[t] = cueLines[t].replace(/<[^>]+>/g, '');
+            }
+
+            // Skip empty cues after cleaning
+            const finalCueText = cueLines.filter(line => line.trim() !== '').join('\r\n');
+            if (!finalCueText) continue;
+
+            srtOutput.push(cueIndex.toString());
+            srtOutput.push(cue.time);
+            srtOutput.push(finalCueText);
+            srtOutput.push('');
+            cueIndex++;
+        }
+        
+        return srtOutput.join('\r\n');
+    }
+
+    // Helper: Trim Referer path to origin-only with a trailing slash to bypass CDN WAF blocks
+    function getSafeReferer(url) {
+        if (!url) return '';
+        try {
+            const parsed = new URL(url);
+            return parsed.origin + '/';
+        } catch (e) {
+            return url;
+        }
+    }
+
     // Subtitle detection & network hook
     function hookNetwork() {
         const handleJSONResponse = (url, json) => {
@@ -371,15 +488,24 @@
 
         function verifyTrack(track, playerUrl) {
             return new Promise((resolve) => {
+                const ref = getSafeReferer(playerUrl || track.referer || window.location.origin);
+                let origin = '';
+                try {
+                    origin = new URL(ref).origin;
+                } catch (e) {}
+                const headers = {
+                    'User-Agent': navigator.userAgent,
+                    'Referer': ref,
+                    'Range': 'bytes=0-100'
+                };
+                if (origin) {
+                    headers['Origin'] = origin;
+                }
                 GM_xmlhttpRequestWithRetry({
                     method: 'GET',
                     url: track.url,
                     timeout: 10000,
-                    headers: {
-                        'User-Agent': navigator.userAgent,
-                        'Referer': playerUrl || track.referer || window.location.origin,
-                        'Range': 'bytes=0-100'
-                    },
+                    headers: headers,
                     onload: function(res) {
                         const isSuccess = res.status === 200 || res.status === 206;
                         if (isSuccess && res.responseText && (res.responseText.includes('WEBVTT') || res.responseText.includes('-->') || res.responseText.includes('1\n00:'))) {
@@ -488,16 +614,30 @@
             }
         }
 
-        function get720pPlaylistUrl(masterM3u8Url) {
+        function get720pPlaylistUrl(masterM3u8Url, playerUrl) {
             return new Promise((resolve) => {
                 if (!masterM3u8Url.toLowerCase().includes('.m3u8')) {
                     resolve(masterM3u8Url);
                     return;
                 }
                 
+                const ref = getSafeReferer(playerUrl || masterM3u8Url);
+                let origin = '';
+                try {
+                    origin = new URL(ref).origin;
+                } catch (e) {}
+                const headers = {
+                    'User-Agent': navigator.userAgent,
+                    'Referer': ref
+                };
+                if (origin) {
+                    headers['Origin'] = origin;
+                }
+
                 GM_xmlhttpRequestWithRetry({
                     method: 'GET',
                     url: masterM3u8Url,
+                    headers: headers,
                     onload: function(res) {
                         if (res.status !== 200 || !res.responseText) {
                             resolve(masterM3u8Url);
@@ -964,29 +1104,31 @@
                 epActive = document.querySelector('#w-episodes a.active, .episodes a.active');
             }
             
-            let epNum = '';
+            let epSlug = '';
             if (epActive) {
-                epNum = epActive.getAttribute('data-slug') || '';
+                epSlug = epActive.getAttribute('data-slug') || '';
             }
-            if (!epNum) {
-                epNum = document.querySelector('#w-report-ep-num')?.value || '';
+            if (!epSlug) {
+                epSlug = document.querySelector('#w-report-ep-num')?.value || '';
             }
-            
-            if (epActive) {
-                const epLabel = getEpisodeLabel(epActive, epNum);
-                return `${animeTitle} - ${epLabel}`.replace(/[^a-zA-Z0-9\s\-_]/g, '').trim();
-            }
-            
-            if (epNum) {
-                let epNumClean = epNum;
-                const match = epNumClean.match(/(?:ep|episode)[-_]?(\d+)/i);
+
+            let epNumClean = '01';
+            if (epSlug) {
+                const match = epSlug.match(/(?:ep|episode|ep-)?[-_]?(\d+)/i);
                 if (match) {
                     epNumClean = match[1];
+                } else if (/^\d+$/.test(epSlug)) {
+                    epNumClean = epSlug;
                 }
-                return `${animeTitle} - Ep ${epNumClean}`.replace(/[^a-zA-Z0-9\s\-_]/g, '').trim();
             }
-            
-            return animeTitle;
+
+            // Pad episode number to at least 2 digits (e.g., 26 -> 26, 9 -> 09)
+            let paddedEp = epNumClean;
+            if (paddedEp.length < 2) {
+                paddedEp = '0' + paddedEp;
+            }
+
+            return `${animeTitle}-s01e${paddedEp}`;
         }
 
         function startBulkDownload() {
@@ -1057,11 +1199,20 @@
                     updateStatus(`Dl Ep ${epNum} (${i + 1}/${tracksToDownload.length})...`);
                     const success = await new Promise((resolveDl) => {
                         enTrack.referer = playerUrl;
+                        const ref = getSafeReferer(playerUrl);
+                        let origin = playerObj.origin;
+                        try {
+                            if (ref) {
+                                origin = new URL(ref).origin;
+                            }
+                        } catch (e) {}
                         const dlHeaders = {
                             'User-Agent': navigator.userAgent,
-                            'Referer': playerUrl,
-                            'Origin': playerObj.origin
+                            'Referer': ref
                         };
+                        if (origin) {
+                            dlHeaders['Origin'] = origin;
+                        }
 
                         GM_xmlhttpRequestWithRetry({
                             method: 'GET',
@@ -1073,11 +1224,13 @@
                                     return;
                                 }
                                 try {
-                                    const text = dlRes.responseText;
+                                    let text = dlRes.responseText;
                                     let extension = 'vtt';
                                     let mimeType = 'text/vtt';
 
-                                    if (enTrack.url.toLowerCase().includes('.srt')) {
+                                    const isSrtUrl = enTrack.url.toLowerCase().includes('.srt');
+                                    // If URL is VTT but we want to make sure SRT conversion works for bulk or single downloader
+                                    if (isSrtUrl) {
                                         extension = 'srt';
                                         mimeType = 'application/x-subrip';
                                     }
@@ -1310,27 +1463,28 @@
             processNext();
         }
 
-        // Fetch subtitle text and download it
-        function downloadSubtitle(track) {
+        function downloadSubtitle(track, forceFormat) {
             const headers = {
                 "User-Agent": navigator.userAgent
             };
+            let rawReferer = '';
             if (track.referer) {
-                headers["Referer"] = track.referer;
-                try {
-                    headers["Origin"] = new URL(track.referer).origin;
-                } catch (e) {}
+                rawReferer = track.referer;
             } else {
                 const playerIframe = document.querySelector('iframe[src*="megaplay.buzz"]') || 
                                      document.querySelector('iframe[src*="megacloud.tv"]') ||
                                      document.querySelector('iframe[src*="rapidcloud.cc"]') ||
                                      document.querySelector('iframe');
                 if (playerIframe && playerIframe.src) {
-                    headers["Referer"] = playerIframe.src;
-                    try {
-                        headers["Origin"] = new URL(playerIframe.src).origin;
-                    } catch (e) {}
+                    rawReferer = playerIframe.src;
                 }
+            }
+            if (rawReferer) {
+                const ref = getSafeReferer(rawReferer);
+                headers["Referer"] = ref;
+                try {
+                    headers["Origin"] = new URL(ref).origin;
+                } catch (e) {}
             }
 
             GM_xmlhttpRequestWithRetry({
@@ -1347,9 +1501,17 @@
                         let extension = 'vtt';
                         let mimeType = 'text/vtt';
 
-                        if (track.url.toLowerCase().includes('.srt')) {
+                        const isSrtUrl = track.url.toLowerCase().includes('.srt');
+                        const wantSrt = forceFormat === 'srt' || isSrtUrl;
+
+                        if (wantSrt) {
                             extension = 'srt';
                             mimeType = 'application/x-subrip';
+                            // Normalize text to check for WEBVTT (handle BOM, leading whitespace etc.)
+                            const checkText = text.replace(/^\uFEFF/, '').trim();
+                            if (!isSrtUrl && (checkText.startsWith('WEBVTT') || checkText.includes('-->'))) {
+                                text = convertVttToSrt(text);
+                            }
                         }
 
                         const englishTracks = detectedTracks.filter(isEnglishTrack);
@@ -1655,7 +1817,7 @@
                     }
                     
                     // Fallback to HLS playlist (.m3u8) if direct MP4 links could not be resolved
-                    const resolvedUrl = await get720pPlaylistUrl(source.url);
+                    const resolvedUrl = await get720pPlaylistUrl(source.url, source.referer);
                     
                     if (actionType === 'download') {
                         videoStatus.innerText = 'Redirecting...';
@@ -1727,20 +1889,25 @@
                 actions.className = 'ani-sub-actions';
 
                 const isSrt = track.url.toLowerCase().includes('.srt');
-                const isVtt = track.url.toLowerCase().includes('.vtt') || !isSrt;
 
                 if (isSrt) {
                     const srtBtn = document.createElement('button');
                     srtBtn.className = 'ani-sub-dl-btn srt';
-                    srtBtn.innerText = 'SRT (1)';
-                    srtBtn.onclick = () => downloadSubtitle(track);
+                    srtBtn.innerText = 'SRT';
+                    srtBtn.onclick = () => downloadSubtitle(track, 'srt');
                     actions.appendChild(srtBtn);
-                } else if (isVtt) {
+                } else {
                     const vttBtn = document.createElement('button');
                     vttBtn.className = 'ani-sub-dl-btn vtt';
-                    vttBtn.innerText = 'VTT (1)';
-                    vttBtn.onclick = () => downloadSubtitle(track);
+                    vttBtn.innerText = 'VTT';
+                    vttBtn.onclick = () => downloadSubtitle(track, 'vtt');
                     actions.appendChild(vttBtn);
+
+                    const srtBtn = document.createElement('button');
+                    srtBtn.className = 'ani-sub-dl-btn srt';
+                    srtBtn.innerText = 'SRT';
+                    srtBtn.onclick = () => downloadSubtitle(track, 'srt');
+                    actions.appendChild(srtBtn);
                 }
 
                 item.appendChild(label);

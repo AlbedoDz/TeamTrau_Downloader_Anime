@@ -1,11 +1,10 @@
 @echo off
-title Anime Downloader CLI Bootstrapper
+setlocal enabledelayedexpansion
+title Unified Multi-Site Anime Downloader Launcher
 cls
 
-:: Change to the directory where this .bat file lives (fixes double-click from Explorer)
 cd /d "%~dp0"
 
-:: Check if the virtual environment exists
 if not exist ".venv" (
     echo [ERROR] Virtual environment .venv not found.
     echo Please run setup_env_py.bat first to set up the environment.
@@ -13,71 +12,66 @@ if not exist ".venv" (
     exit /b 1
 )
 
-:: If arguments are passed, run directly in CLI mode forwarding all arguments
+:: If direct URL parameter is passed via command line, execute auto-detect mode
 if not "%~1"=="" (
-    .venv\Scripts\python.exe main.py %*
+    .venv\Scripts\python.exe run_app.py -u "%~1" %2 %3 %4 %5 %6 %7 %8 %9
     echo.
     pause
-    exit /b %ERRORLEVEL%
+    exit /b !ERRORLEVEL!
 )
 
-:: ============================================================
-::   INTERACTIVE MODE
-:: ============================================================
+:MENU
+cls
 echo ============================================================
-echo      ANIME SUBTITLE AND VIDEO BATCH DOWNLOADER
+echo      TEAMTRAU UNIFIED MULTI-SITE ANIME DOWNLOADER
 echo ============================================================
 echo.
-echo  Supported site: https://anikototv.to
-echo  URL format   : https://anikototv.to/watch/^<anime-slug^>
+echo Select Site Download Module:
 echo.
-echo Please answer the following prompts. Leave blank to use defaults.
+echo   [1] AnimeCube Module (animecube.live)
+echo   [2] AniKoto Module   (anikototv.to)
+echo   [3] Auto-Detect Site (Enter any supported Anime URL)
+echo   [0] Exit Launcher
 echo.
+set /p LAUNCHER_CHOICE="Enter Choice [1]: "
+if not defined LAUNCHER_CHOICE set LAUNCHER_CHOICE=1
 
-set /p ANIME_URL="[1/5] Enter Anime URL: "
-if "%ANIME_URL%"=="" (
+if "!LAUNCHER_CHOICE!"=="1" (
+    call run_animecube.bat
+    goto :MENU
+)
+if "!LAUNCHER_CHOICE!"=="2" (
+    call run_anikoto.bat
+    goto :MENU
+)
+if "!LAUNCHER_CHOICE!"=="3" goto :AUTO_DETECT
+if "!LAUNCHER_CHOICE!"=="0" exit /b 0
+
+:AUTO_DETECT
+echo.
+echo ------------------------------------------------------------
+echo  AUTO-DETECT DOWNLOAD MODE
+echo ------------------------------------------------------------
+set /p ANIME_URL="Enter Anime URL: "
+if not defined ANIME_URL (
     echo [ERROR] Anime URL cannot be empty!
     pause
-    exit /b 1
+    goto :MENU
 )
 
-set /p EPISODES="[2/5] Episode Range (e.g., all, 1-5, 3,5,10-12) [all]: "
-if "%EPISODES%"=="" set EPISODES=all
+for /f "delims=" %%I in ("!ANIME_URL!") do set ANIME_URL=%%~I
 
-set /p SUB_LANG="[3/5] Subtitle Language (e.g. en, vi) [en]: "
-if "%SUB_LANG%"=="" set SUB_LANG=en
+set /p EPISODES="Episode Range (e.g. all, 1-5, SP) [all]: "
+if not defined EPISODES set EPISODES=all
 
-set /p OUTPUT_DIR="[4/5] Output Directory [.\downloads]: "
-if "%OUTPUT_DIR%"=="" set OUTPUT_DIR=.\downloads
+set /p SUB_LANG="Subtitle Language (e.g. en, vi) [en]: "
+if not defined SUB_LANG set SUB_LANG=en
 
-echo.
-echo [5/5] Select Download Mode:
-echo   [1] Subtitles Only  (fast, no ffmpeg needed)
-echo   [2] Videos Only
-echo   [3] Both Subtitles + Videos  (default)
-echo.
-set /p MODE_CHOICE="Enter Choice (1/2/3) [3]: "
-if "%MODE_CHOICE%"=="" set MODE_CHOICE=3
-
-set EXTRA_ARGS=
-if "%MODE_CHOICE%"=="1" set EXTRA_ARGS=--sub-only
-if "%MODE_CHOICE%"=="2" set EXTRA_ARGS=--video-only
+set /p OUTPUT_DIR="Output Directory [.\downloads]: "
+if not defined OUTPUT_DIR set OUTPUT_DIR=.\downloads
 
 echo.
-echo ------------------------------------------------------------
-echo  Starting download...
-echo  URL      : %ANIME_URL%
-echo  Episodes : %EPISODES%
-echo  Language : %SUB_LANG%
-echo  Output   : %OUTPUT_DIR%
-echo  Mode     : %EXTRA_ARGS%
-echo ------------------------------------------------------------
+.venv\Scripts\python.exe run_app.py -u "!ANIME_URL!" -e "!EPISODES!" -l "!SUB_LANG!" -o "!OUTPUT_DIR!"
 echo.
-
-.venv\Scripts\python.exe main.py -u "%ANIME_URL%" -e "%EPISODES%" -l "%SUB_LANG%" -o "%OUTPUT_DIR%" %EXTRA_ARGS%
-
-echo.
-echo ============================================================
-echo  Done! Press any key to exit.
-echo ============================================================
 pause
+goto :MENU

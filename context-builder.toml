@@ -1,0 +1,25 @@
+# Context Builder Configuration File - Optimized for Large Projects
+
+output = "context.md"
+output_folder = "docs"
+encoding = "o200k_base"
+timestamped_output = true
+auto_diff = true
+
+# [QUAN TRỌNG] Bật diff_only cho dự án lớn để không nạp lại toàn bộ code không thay đổi
+diff_only = true 
+
+# Giới hạn số dòng ngữ cảnh xung quanh đoạn code thay đổi để tiết kiệm token
+diff_context_lines = 3
+
+# [QUAN TRỌNG] Thiết lập ngân sách token tối đa (ví dụ: 100k token để chừa chỗ cho LLM trả lời)
+max_tokens = 100000 
+
+# Thu hẹp phạm vi quét: Cân nhắc bỏ "txt" và "md" nếu chúng chứa dữ liệu log hoặc tài liệu quá dài không cần thiết cho logic code
+filter = ["py", "bat", "ps1", "toml", "md"] 
+
+# [QUAN TRỌNG] Mở rộng danh sách bỏ qua với các thư mục rác phổ biến của Python/Hệ thống
+ignore = ["docs", "target", ".git", "node_modules", "artifacts", "build", "__pycache__", ".venv", "venv", ".pytest_cache", ".env"]
+
+# Bật đánh số dòng để LLM dễ dàng tham chiếu vị trí cần sửa lỗi (Debug/Refactor)
+line_numbers = true

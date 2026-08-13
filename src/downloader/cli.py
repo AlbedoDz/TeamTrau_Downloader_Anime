@@ -58,6 +58,50 @@ def download(
         "--delay",
         help="Randomized delay range in seconds between episode downloads (e.g., '3-7').",
     ),
+    tvdb_id: str | None = typer.Option(
+        None,
+        "--tvdb-id",
+        help="TheTVDB.com Series ID or slug to match and verify correct series naming.",
+    ),
+    naming_format: str = typer.Option(
+        "simple",
+        "--naming-format",
+        help="Episode naming format choice ('simple', 'anikoto', 'tvdb').",
+    ),
+    exclude_servers: str | None = typer.Option(
+        None,
+        "--exclude-servers",
+        "-x",
+        help="Comma-separated list of server names to exclude (e.g. 'HD-1,VidCloud-1').",
+    ),
+    server_priority: str | None = typer.Option(
+        None,
+        "--server-priority",
+        "-p",
+        help="Comma-separated list of preferred servers (e.g. 'vidplay,vidstream').",
+    ),
+    interactive: bool = typer.Option(
+        False,
+        "--interactive",
+        "-i",
+        help="Interactive mode: scan and manually select streaming server for each episode.",
+    ),
+    only_server: str | None = typer.Option(
+        None,
+        "--only-server",
+        "-s",
+        help="Only download from servers matching this name (e.g. 'vidplay').",
+    ),
+    proxy: str | None = typer.Option(
+        None,
+        "--proxy",
+        help="HTTP/SOCKS5 proxy server URL (e.g. 'http://127.0.0.1:8080' or 'socks5://127.0.0.1:1080').",
+    ),
+    use_browser_sniffer: bool = typer.Option(
+        False,
+        "--use-browser-sniffer",
+        help="Enable Playwright Headless Browser Sniffer fallback for media links.",
+    ),
 ):
     # 1. Validation: Either URL or File
     if not url and not file:
@@ -111,7 +155,18 @@ def download(
 
     # 5. Run downloader
     console.print("[bold green]Starting batch download process...[/bold green]")
-    downloader = BatchDownloader(output_dir=output, delay_range=delay_range)
+    exclude_list = [s.strip() for s in exclude_servers.split(",")] if exclude_servers else []
+    priority_list = [s.strip() for s in server_priority.split(",")] if server_priority else []
+    downloader = BatchDownloader(
+        output_dir=output,
+        delay_range=delay_range,
+        exclude_servers=exclude_list,
+        server_priority=priority_list,
+        interactive=interactive,
+        only_server=only_server,
+        proxy=proxy,
+        use_browser_sniffer=use_browser_sniffer,
+    )
 
     try:
         for idx, target_url in enumerate(urls):
@@ -126,6 +181,8 @@ def download(
                     lang=lang,
                     sub_only=sub_only,
                     video_only=video_only,
+                    tvdb_id=tvdb_id,
+                    naming_format=naming_format,
                 )
             except Exception as e:
                 console.print(

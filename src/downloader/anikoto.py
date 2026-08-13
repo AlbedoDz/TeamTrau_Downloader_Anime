@@ -41,18 +41,32 @@ class AnikotoExtractor(BaseExtractor):
                     f"[error]Failed to fetch watch page (HTTP {res.status_code})[/error]",
                     style="red",
                 )
-                return {"title": "Unknown Anime", "episodes": []}
+                return {"title": "Unknown Anime", "episodes": [], "description": "", "year": None}
 
             soup = BeautifulSoup(res.text, "html.parser")
             h1 = soup.find("h1", class_="title")
             title = h1.text.strip() if h1 else "Unknown Anime"
             console.print(f"[success]Title: {title}[/success]")
 
+            description = ""
+            desc_el = soup.select_one(".content")
+            if desc_el:
+                description = desc_el.text.strip()
+
+            year = None
+            for div in soup.select("div"):
+                txt = div.text.strip()
+                if txt.startswith("Premiered:") or txt.startswith("Aired:"):
+                    m_yr = re.search(r"\b(19\d{2}|20\d{2})\b", txt)
+                    if m_yr:
+                        year = int(m_yr.group(1))
+                        break
+
             # Extract anime ID (mangaId) from page source
             m_id = re.search(r"mangaId\s*=\s*(\d+)", res.text)
             if not m_id:
                 console.print("[error]Could not find anime ID in page source.[/error]", style="red")
-                return {"title": title, "episodes": []}
+                return {"title": title, "episodes": [], "description": description, "year": year}
             anime_id = m_id.group(1)
 
             # Generate VRF token using RC4 simple-hash algorithm
@@ -124,10 +138,10 @@ class AnikotoExtractor(BaseExtractor):
 
         except Exception as e:
             console.print(f"[error]Failed to parse anime details: {e}[/error]", style="red")
-            return {"title": "Unknown Anime", "episodes": []}
+            return {"title": "Unknown Anime", "episodes": [], "description": "", "year": None}
 
         console.print(f"[success]Found {len(episodes)} episodes.[/success]")
-        return {"title": title, "episodes": episodes}
+        return {"title": title, "episodes": episodes, "description": description, "year": year}
 
     def get_episode_servers(self, episode_item: dict) -> list[dict]:
         """Fetch and parse all available servers for the episode."""
@@ -520,6 +534,20 @@ class AnikotoExtractor(BaseExtractor):
                     or lbl in ("sub", "srt", "vtt")
                 ):
                     matched.append(t)
+            elif target_lower in ("es", "spa", "spanish", "espanol", "español"):
+                # Spanish check
+                is_spanish = False
+                if any(kw in lbl for kw in ["spanish", "espanol", "español"]):
+                    is_spanish = True
+                elif code in ("es", "spa", "spanish"):
+                    is_spanish = True
+
+                # Exclude Portuguese to avoid false positives (since "portuguese" contains "es")
+                if "portuguese" in lbl or "portugues" in lbl:
+                    is_spanish = False
+
+                if is_spanish:
+                    matched.append(t)
             else:
                 # For other languages (e.g. "vi")
                 if target_lower in lbl or target_lower in code:
@@ -548,6 +576,27 @@ class AnikotoExtractor(BaseExtractor):
                 return 3
 
             matched.sort(key=get_priority)
+        elif target_lower in ("es", "spa", "spanish", "espanol", "español"):
+
+            def get_priority(track: dict) -> int:
+                lbl = track["label"].strip().lower()
+                # Priority 0: Latin America / Latam / America Latina Spanish
+                latin_america_indicators = [
+                    "latin america",
+                    "latin_america",
+                    "latam",
+                    "america latina",
+                    "américa latina",
+                ]
+                if any(ind in lbl for ind in latin_america_indicators):
+                    return 0
+                # Priority 1: CR Spanish
+                if "cr" in lbl:
+                    return 1
+                # Priority 2: Spain Spanish or generic
+                return 2
+
+            matched.sort(key=get_priority)
 
         selected = matched[0]
         return [
@@ -568,8 +617,31 @@ class AnikotoExtractor(BaseExtractor):
             origin = f"{parsed_player.scheme}://{parsed_player.netloc}"
             extra_headers = {"Origin": origin}
             safe_referer = get_safe_referer(player_url)
-            res = self.http.get(master_url, referer=safe_referer, retries=2, headers=extra_headers)
-            if res.status_code != 200 or not res.text:
+            res = None
+            try:
+                res = self.http.get(
+                    master_url, referer=safe_referer, retries=1, headers=extra_headers
+                )
+                if res.status_code == 403:
+                    raise ValueError("HTTP 403 Forbidden")
+                if res.status_code != 200 or not res.text.strip():
+                    res = None
+            except Exception as e:
+                if "403" in str(e):
+                    # Fail fast on 403 to avoid retry delays
+                    pass
+                else:
+                    pass
+
+            if res is None:
+                try:
+                    res = self.http.get(
+                        master_url, referer=player_url, retries=1, headers=extra_headers
+                    )
+                except Exception:
+                    pass
+
+            if res is None or res.status_code != 200 or not res.text:
                 return master_url
             lines = res.text.split("\n")
             url_720p = ""

@@ -1,3 +1,17 @@
+import sys
+
+# Prevent UnicodeEncodeError on legacy terminals by reconfiguring stdout/stderr
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(errors="backslashreplace")
+    except Exception:
+        pass
+if hasattr(sys.stderr, "reconfigure"):
+    try:
+        sys.stderr.reconfigure(errors="backslashreplace")
+    except Exception:
+        pass
+
 import base64
 import ctypes
 import ctypes.wintypes
@@ -27,7 +41,7 @@ def get_safe_referer(url: str) -> str:
     return url
 
 
-console = Console()
+console = Console(safe_box=True)
 
 
 def clean_filename(name: str) -> str:
@@ -128,10 +142,23 @@ def vtt_to_srt(vtt_content: str) -> str:
 class HttpClient:
     """HTTP Client impersonating chrome browser using curl_cffi."""
 
-    def __init__(self, impersonate="chrome120", delay_range=(2.0, 5.0)):
+    def __init__(
+        self,
+        impersonate="chrome120",
+        delay_range=(2.0, 5.0),
+        proxy: str | None = None,
+    ):
         self.session = requests.Session(impersonate=impersonate)
         self.delay_range = delay_range
         self.last_request_time = 0.0
+        if proxy:
+            self.set_proxy(proxy)
+
+    def set_proxy(self, proxy: str):
+        """Configure HTTP/HTTPS proxy for curl_cffi session."""
+        if proxy:
+            self.session.proxies = {"http": proxy, "https": proxy}
+            console.print(f"[success]Configured proxy for HTTP client: {proxy}[/success]")
 
     def load_cookies_from_file(self, cookies_file_path: str):
         """Load Netscape format cookies file into the curl_cffi session."""
@@ -178,6 +205,25 @@ class HttpClient:
             headers = {}
         if referer:
             headers["Referer"] = referer
+            # Derive Origin from Referer if not explicitly set
+            if "Origin" not in headers:
+                parsed_ref = urlparse(referer)
+                if parsed_ref.scheme and parsed_ref.netloc:
+                    headers["Origin"] = f"{parsed_ref.scheme}://{parsed_ref.netloc}"
+        elif "Origin" not in headers:
+            # Fallback: Derive Origin from destination URL
+            parsed_dest = urlparse(url)
+            if parsed_dest.scheme and parsed_dest.netloc:
+                headers["Origin"] = f"{parsed_dest.scheme}://{parsed_dest.netloc}"
+
+        # Inject Sec-Fetch-* headers to bypass WAF metadata filtering on CDNs like mewstream
+        if "Origin" in headers or "Referer" in headers:
+            if "Sec-Fetch-Site" not in headers:
+                headers["Sec-Fetch-Site"] = "cross-site"
+            if "Sec-Fetch-Mode" not in headers:
+                headers["Sec-Fetch-Mode"] = "cors"
+            if "Sec-Fetch-Dest" not in headers:
+                headers["Sec-Fetch-Dest"] = "empty"
 
         options = {"headers": headers, "timeout": 60, **kwargs}
 
@@ -225,12 +271,80 @@ class HttpClient:
 
     def get_soup(self, url: str, **kwargs) -> BeautifulSoup:
         """Fetch URL and parse HTML content with BeautifulSoup."""
+        # Use a retry mechanism inside GET request
         response = self.get(url, **kwargs)
         return BeautifulSoup(response.text, "html.parser")
 
     def get_json(self, url: str, **kwargs) -> dict:
         """Fetch URL and parse JSON payload."""
         response = self.get(url, **kwargs)
+        return response.json()
+
+    def post(
+        self,
+        url: str,
+        data: dict | str | None = None,
+        json_data: dict | None = None,
+        headers: dict | None = None,
+        retries: int = 3,
+        delay: float = 3.0,
+        rate_limit: bool = True,
+        **kwargs,
+    ) -> requests.Response:
+        """Execute POST request with exponential backoff on retryable failures."""
+        if headers is None:
+            headers = {}
+        if json_data is not None:
+            options = {"json": json_data}
+        else:
+            options = {"data": data}
+
+        options.update({"headers": headers, "timeout": 60, **kwargs})
+
+        attempt = 0
+        current_delay = delay
+        last_error = None
+
+        while attempt < retries:
+            if rate_limit:
+                self._sleep_for_rate_limiting()
+            try:
+                console.print(f"[dim]HTTP POST -> {url} (Attempt {attempt + 1}/{retries})[/dim]")
+                response = self.session.post(url, **options)
+
+                # Success
+                if response.status_code in (200, 201):
+                    return response
+
+                # Rate limited or server error -> backoff
+                if response.status_code in (429, 403, 500, 502, 503, 504):
+                    last_error = f"HTTP {response.status_code}"
+                    console.print(
+                        f"[warning]HTTP {response.status_code} received on POST. "
+                        f"Retrying in {current_delay:.1f}s...[/warning]",
+                        style="yellow",
+                    )
+                    time.sleep(current_delay)
+                    current_delay *= 2
+                    attempt += 1
+                else:
+                    return response
+            except Exception as e:
+                last_error = e
+                console.print(
+                    f"[warning]POST request exception: {e}. "
+                    f"Retrying in {current_delay:.1f}s...[/warning]",
+                    style="yellow",
+                )
+                time.sleep(current_delay)
+                current_delay *= 2
+                attempt += 1
+
+        raise Exception(f"Failed to POST to url {url} after {retries} attempts: {last_error}")
+
+    def post_json(self, url: str, **kwargs) -> dict:
+        """Fetch URL via POST and parse JSON payload."""
+        response = self.post(url, **kwargs)
         return response.json()
 
 
@@ -301,7 +415,7 @@ def decrypt_chrome_cookie(ciphertext: bytes, key: bytes) -> str:
             return ""
 
 
-def get_chrome_cookies_temp_file() -> str | None:
+def get_chrome_cookies_temp_file() -> tuple[str, str] | None:
     """Extract browser cookies (Chrome, Edge, Brave, Vivaldi, Opera, Firefox), decrypt them, and write them to a temporary Netscape cookies file."""
     import glob
 
@@ -499,6 +613,7 @@ def get_chrome_cookies_temp_file() -> str | None:
     temp_cookie_file = os.path.join(tempfile.gettempdir(), "netscape_cookies.txt")
     total_decrypted = 0
     cookies_written = False
+    primary_browser_type = None
 
     # Initialize cookies file
     try:
@@ -538,24 +653,53 @@ def get_chrome_cookies_temp_file() -> str | None:
             try:
                 shutil.copy2(cookies_db_path, temp_db_path)
                 copied = True
-            except Exception as e:
-                console.print(f"[dim]Failed to copy {b['display']} cookies database: {e}[/dim]")
-                continue
+            except Exception:
+                # If copying fails due to a locked file (Sharing Violation / Permission Denied),
+                # we can connect directly to the locked database in read-only and no-lock mode.
+                pass
 
         try:
-            conn = sqlite3.connect(temp_db_path)
-            cursor = conn.cursor()
-
             decrypted_count = 0
+            rows = []
+
+            if copied:
+                conn = sqlite3.connect(temp_db_path)
+                cursor = conn.cursor()
+                if b["type"] == "chromium":
+                    cursor.execute(
+                        "SELECT host_key, name, path, is_secure, expires_utc, encrypted_value FROM cookies"
+                    )
+                else:
+                    cursor.execute("SELECT host, name, path, isSecure, expiry, value FROM moz_cookies")
+                rows = cursor.fetchall()
+                conn.close()
+                if os.path.exists(temp_db_path):
+                    os.remove(temp_db_path)
+            else:
+                # Direct URI connection to locked database bypassing locks
+                uri_path = cookies_db_path.replace("\\", "/")
+                # For Windows drive letters, ensure we have the correct URI prefix
+                if not uri_path.startswith("/"):
+                    uri_path = "/" + uri_path
+                uri = f"file://{uri_path}?mode=ro&nolock=1"
+                try:
+                    conn = sqlite3.connect(uri, uri=True)
+                    cursor = conn.cursor()
+                    if b["type"] == "chromium":
+                        cursor.execute(
+                            "SELECT host_key, name, path, is_secure, expires_utc, encrypted_value FROM cookies"
+                        )
+                    else:
+                        cursor.execute("SELECT host, name, path, isSecure, expiry, value FROM moz_cookies")
+                    rows = cursor.fetchall()
+                    conn.close()
+                except Exception as db_err:
+                    console.print(f"[dim]Failed direct connection to locked database {b['display']}: {db_err}[/dim]")
+                    continue
 
             # --- Chromium-based Browser Parsing ---
             if b["type"] == "chromium":
                 key = get_browser_master_key(b["name"])
-                cursor.execute(
-                    "SELECT host_key, name, path, is_secure, expires_utc, encrypted_value FROM cookies"
-                )
-                rows = cursor.fetchall()
-
                 with open(temp_cookie_file, "a", encoding="utf-8") as f:
                     for host_key, name, path, is_secure, expires_utc, encrypted_value in rows:
                         decrypted_val = decrypt_chrome_cookie(encrypted_value, key)
@@ -576,9 +720,6 @@ def get_chrome_cookies_temp_file() -> str | None:
 
             # --- Firefox-based Browser Parsing (Plaintext SQLite) ---
             elif b["type"] == "firefox":
-                cursor.execute("SELECT host, name, path, isSecure, expiry, value FROM moz_cookies")
-                rows = cursor.fetchall()
-
                 with open(temp_cookie_file, "a", encoding="utf-8") as f:
                     for host, name, path, is_secure_val, expiry, value in rows:
                         if value:
@@ -598,6 +739,8 @@ def get_chrome_cookies_temp_file() -> str | None:
                     f"[success]Successfully loaded {decrypted_count} cookies from {b['display']}.[/success]"
                 )
                 total_decrypted += decrypted_count
+                if not primary_browser_type:
+                    primary_browser_type = b["type"]
 
         except Exception as e:
             console.print(f"[dim]Failed to extract {b['display']} cookies: {e}[/dim]")
@@ -608,7 +751,7 @@ def get_chrome_cookies_temp_file() -> str | None:
                     pass
 
     if total_decrypted > 0:
-        return temp_cookie_file
+        return temp_cookie_file, primary_browser_type
 
     if cookies_written and os.path.exists(temp_cookie_file):
         try:
