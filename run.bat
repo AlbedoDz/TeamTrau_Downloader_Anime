@@ -64,7 +64,7 @@ for /f "delims=" %%I in ("!ANIME_URL!") do set ANIME_URL=%%~I
 set /p EPISODES="Episode Range (e.g. all, 1-5, SP) [all]: "
 if not defined EPISODES set EPISODES=all
 
-set /p SUB_LANG="Subtitle Language (e.g. en, vi) [en]: "
+set /p SUB_LANG="Subtitle Language (e.g. en, es, es-es, vi) [en]: "
 if not defined SUB_LANG set SUB_LANG=en
 
 set /p OUTPUT_DIR="Output Directory [.\downloads]: "

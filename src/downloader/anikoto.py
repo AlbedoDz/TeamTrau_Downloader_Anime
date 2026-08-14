@@ -4,7 +4,7 @@ from urllib.parse import urljoin, urlparse
 from bs4 import BeautifulSoup
 
 from downloader.extractor import BaseExtractor, register_extractor
-from downloader.utils import console, get_safe_referer
+from downloader.utils import classify_spanish_variant, console, get_safe_referer
 
 
 @register_extractor
@@ -534,19 +534,24 @@ class AnikotoExtractor(BaseExtractor):
                     or lbl in ("sub", "srt", "vtt")
                 ):
                     matched.append(t)
-            elif target_lower in ("es", "spa", "spanish", "espanol", "español"):
-                # Spanish check
-                is_spanish = False
-                if any(kw in lbl for kw in ["spanish", "espanol", "español"]):
-                    is_spanish = True
-                elif code in ("es", "spa", "spanish"):
-                    is_spanish = True
-
-                # Exclude Portuguese to avoid false positives (since "portuguese" contains "es")
-                if "portuguese" in lbl or "portugues" in lbl:
-                    is_spanish = False
-
-                if is_spanish:
+            elif target_lower in ("es-es", "esp", "spain", "castellano"):
+                # Explicit Spain/European Spanish requested
+                var = classify_spanish_variant(lbl, code)
+                if var == "es-ES":
+                    matched.append(t)
+            elif target_lower in (
+                "es",
+                "spa",
+                "spanish",
+                "espanol",
+                "español",
+                "es-la",
+                "latam",
+                "latin america",
+            ):
+                # Spanish (Latin America prioritized, European Spanish excluded unless explicitly requested)
+                var = classify_spanish_variant(lbl, code)
+                if var in ("es-LA", "es"):
                     matched.append(t)
             else:
                 # For other languages (e.g. "vi")
@@ -576,19 +581,27 @@ class AnikotoExtractor(BaseExtractor):
                 return 3
 
             matched.sort(key=get_priority)
-        elif target_lower in ("es", "spa", "spanish", "espanol", "español"):
+        elif target_lower in (
+            "es",
+            "spa",
+            "spanish",
+            "espanol",
+            "español",
+            "es-la",
+            "latam",
+            "latin america",
+            "es-es",
+            "esp",
+            "spain",
+            "castellano",
+        ):
 
             def get_priority(track: dict) -> int:
                 lbl = track["label"].strip().lower()
-                # Priority 0: Latin America / Latam / America Latina Spanish
-                latin_america_indicators = [
-                    "latin america",
-                    "latin_america",
-                    "latam",
-                    "america latina",
-                    "américa latina",
-                ]
-                if any(ind in lbl for ind in latin_america_indicators):
+                c = track.get("lang", "").strip().lower()
+                var = classify_spanish_variant(lbl, c)
+                # Priority 0: Latin America (es-LA)
+                if var == "es-LA":
                     return 0
                 # Priority 1: CR Spanish
                 if "cr" in lbl:

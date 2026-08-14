@@ -21,6 +21,7 @@ from rich.progress import (
 from downloader.extractor import get_extractor_for_url
 from downloader.utils import (
     HttpClient,
+    classify_spanish_variant,
     clean_filename,
     clean_folder_name,
     console,
@@ -80,29 +81,18 @@ def resolve_sub_lang_tag(track_label: str, default_lang: str) -> str:
     """Resolve standard ISO/IETF subtitle language sub-tag for player auto-detection.
 
     Examples:
-        - Spanish (Latin America) -> es-419
-        - Spanish (Spain) -> es-ES
+        - Spanish (Latin America) / Spanish (- Español (LA)) -> es-LA
+        - Spanish (Spain) / Spanish (- Español (ES)) -> es-ES
         - Spanish (General) -> es
         - English -> en
         - Vietnamese -> vi
     """
-    lbl = track_label.lower()
+    lbl = (track_label or "").lower()
 
-    # Spanish check
-    if any(kw in lbl for kw in ["spanish", "espanol", "español", "spa"]):
-        latin_america_indicators = [
-            "latin america",
-            "latin_america",
-            "latam",
-            "america latina",
-            "américa latina",
-        ]
-        if any(ind in lbl for ind in latin_america_indicators):
-            return "es-419"
-        spain_indicators = ["spain", "españa", "espana", "castellano"]
-        if any(ind in lbl for ind in spain_indicators):
-            return "es-ES"
-        return "es"
+    # Spanish check via unified classifier
+    sp_var = classify_spanish_variant(lbl, default_lang)
+    if sp_var:
+        return sp_var
 
     # English check
     if any(kw in lbl for kw in ["english", "eng"]):
@@ -114,9 +104,9 @@ def resolve_sub_lang_tag(track_label: str, default_lang: str) -> str:
 
     # Fallback mapping based on default_lang
     def_lower = default_lang.lower()
-    if def_lower in ("es-419", "latin america", "latam"):
-        return "es-419"
-    if def_lower in ("es-es", "spain", "castellano"):
+    if def_lower in ("es-la", "es-419", "latin america", "latam"):
+        return "es-LA"
+    if def_lower in ("es-es", "spain", "castellano", "esp"):
         return "es-ES"
     if def_lower in ("es", "spanish", "espanol", "español", "spa"):
         return "es"
@@ -126,6 +116,30 @@ def resolve_sub_lang_tag(track_label: str, default_lang: str) -> str:
         return "vi"
 
     return def_lower
+
+
+def get_target_lang_candidate_tags(target_lang: str) -> list[str]:
+    """Get list of matching filename language tags for a given target language."""
+    t_lower = target_lang.lower().strip()
+    if t_lower in ("es-es", "esp", "spain", "castellano"):
+        return ["es-ES"]
+    if t_lower in (
+        "es",
+        "spa",
+        "spanish",
+        "espanol",
+        "español",
+        "es-la",
+        "latam",
+        "latin america",
+    ):
+        return ["es-LA", "es-419", "es"]
+    if t_lower in ("en", "eng", "english"):
+        return ["en", "en-US", "en-GB"]
+    if t_lower in ("vi", "viet", "vietnamese"):
+        return ["vi"]
+    tag = resolve_sub_lang_tag("", target_lang)
+    return [tag] if tag else []
 
 
 def shorten_title_safe(title: str, max_len: int = 40) -> str:
@@ -932,24 +946,20 @@ class BatchDownloader:
             sub_skipped_this_ep = False
             video_skipped_this_ep = False
 
-            # Check if subtitle already exists
+            # Check if subtitle already exists for the requested language
             sub_lang_code = resolve_sub_lang_tag("", lang)
+            candidate_tags = get_target_lang_candidate_tags(lang)
             existing_sub_found = False
             sub_filename_default = f"{filename_prefix}.{sub_lang_code}.srt"
 
             for ext_chk in ("srt", "vtt"):
-                for tag_chk in (sub_lang_code, "es-419", "es-ES", "es", "en", "vi"):
+                for tag_chk in candidate_tags:
                     check_path = os.path.join(anime_dir, f"{filename_prefix}.{tag_chk}.{ext_chk}")
                     if os.path.exists(check_path) and os.path.getsize(check_path) > 100:
                         existing_sub_found = True
                         sub_filename_default = f"{filename_prefix}.{tag_chk}.{ext_chk}"
                         break
                 if existing_sub_found:
-                    break
-                check_plain = os.path.join(anime_dir, f"{filename_prefix}.{ext_chk}")
-                if os.path.exists(check_plain) and os.path.getsize(check_plain) > 100:
-                    existing_sub_found = True
-                    sub_filename_default = f"{filename_prefix}.{ext_chk}"
                     break
 
             if need_sub and existing_sub_found:
@@ -1224,7 +1234,15 @@ class BatchDownloader:
                         sub_tracks = ep_data.get("subtitles", [])
                         if not sub_tracks:
                             # Fallback logic for Spanish subtitles if not found
-                            if lang.lower() in ("es", "spanish", "espanol", "español", "spa"):
+                            if lang.lower() in (
+                                "es",
+                                "spanish",
+                                "espanol",
+                                "español",
+                                "spa",
+                                "es-la",
+                                "latam",
+                            ):
                                 console.print(
                                     f"[warning]Spanish subtitles not found on server {server_name}. Falling back to English.[/warning]",
                                     style="yellow",
@@ -1254,7 +1272,7 @@ class BatchDownloader:
                                     if sub_url.lower().endswith(".srt") or ".vtt" in sub_url.lower()
                                     else "vtt"
                                 )
-                                # Determine actual language tag from label for automatic media player recognition (es-419, es-ES, es, en, vi)
+                                # Determine actual language tag from label for automatic media player recognition (es-LA, es-ES, es, en, vi)
                                 actual_lang_tag = resolve_sub_lang_tag(track.get("label", ""), lang)
                                 sub_lang_suffix = f".{actual_lang_tag}"
 

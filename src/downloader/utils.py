@@ -60,6 +60,123 @@ def clean_folder_name(name: str) -> str:
     return clean_filename(name)
 
 
+def classify_spanish_variant(label: str, code: str = "") -> str | None:
+    """Classify a subtitle track label/code as 'es-LA', 'es-ES', or 'es' (generic).
+
+    Returns:
+        - 'es-LA': Latin American Spanish (e.g. Spanish[LAT], Español (LA), Latin America, es-419)
+        - 'es-ES': European / Spain Spanish (e.g. Spanish[ESP], Español (ES), Castellano)
+        - 'es': Generic or neutral Spanish
+        - None: Non-Spanish track (or Portuguese)
+    """
+    lbl = (label or "").strip().lower()
+    c = (code or "").strip().lower()
+
+    # 1. Anti-pattern guard: Exclude Portuguese ("portuguese" contains "es")
+    if "portuguese" in lbl or "portugues" in lbl or c in ("pt", "por", "pt-br", "pt-pt"):
+        return None
+
+    # 2. Check if it matches Spanish keywords or codes
+    is_spanish = False
+    if any(kw in lbl for kw in ["spanish", "espanol", "español", "castellano", "castilian"]):
+        is_spanish = True
+    elif c in (
+        "es",
+        "spa",
+        "spanish",
+        "es-la",
+        "es-419",
+        "es-es",
+        "es_la",
+        "es_419",
+        "es_es",
+    ):
+        is_spanish = True
+
+    if not is_spanish:
+        return None
+
+    # 3. Check for Latin American Spanish indicators (Priority)
+    latin_indicators = [
+        "latin america",
+        "latin_america",
+        "latinamerica",
+        "america latina",
+        "américa latina",
+        "americalatina",
+        "latinoamérica",
+        "latinoamerica",
+        "latam",
+        "[lat]",
+        "(lat)",
+        "[la]",
+        "(la)",
+        "[latam]",
+        "(latam)",
+        "[es-la]",
+        "(es-la)",
+        "[es-419]",
+        "(es-419)",
+        "spanish[lat]",
+        "spanish[la]",
+        "español (la)",
+        "espanol (la)",
+        "spanish (la)",
+        "español (lat)",
+        "espanol (lat)",
+        "spanish (lat)",
+        "español (latam)",
+        "espanol (latam)",
+        "spanish (latam)",
+    ]
+    if any(ind in lbl for ind in latin_indicators) or c in (
+        "es-la",
+        "es-419",
+        "es_la",
+        "es_419",
+        "spa-la",
+        "spa-lat",
+    ):
+        return "es-LA"
+    if re.search(
+        r"\[lat\]|\(lat\)|\b\[la\]|\(la\)|\b\[latam\]|\(latam\)|\b\[es-419\]|\(es-419\)|\bespañol\s*\(\s*la\s*\)|\bespanol\s*\(\s*la\s*\)|\bspanish\s*\(\s*la\s*\)|\bespañol\s*\(\s*lat\s*\)|\bespanol\s*\(\s*lat\s*\)|\bspanish\s*\(\s*lat\s*\)",
+        lbl,
+    ):
+        return "es-LA"
+
+    # 4. Check for Spain / European Spanish indicators
+    spain_indicators = [
+        "spain",
+        "españa",
+        "espana",
+        "castellano",
+        "castilian",
+        "iberian",
+        "[esp]",
+        "(esp)",
+        "[es]",
+        "(es)",
+        "[es-es]",
+        "(es-es)",
+        "spanish[esp]",
+        "español (es)",
+        "espanol (es)",
+        "spanish (es)",
+        "español (esp)",
+        "espanol (esp)",
+        "spanish (esp)",
+    ]
+    if any(ind in lbl for ind in spain_indicators) or c in ("es-es", "es_es", "spa-es"):
+        return "es-ES"
+    if re.search(
+        r"\[esp\]|\(esp\)|\b-\s*esp\b|\[es-es\]|\(es-es\)|\bespañol\s*\(\s*es\s*\)|\bespanol\s*\(\s*es\s*\)|\bspanish\s*\(\s*es\s*\)|\bespañol\s*\(\s*esp\s*\)|\bespanol\s*\(\s*esp\s*\)",
+        lbl,
+    ):
+        return "es-ES"
+
+    return "es"
+
+
 def convert_timestamp_vtt_to_srt(ts: str) -> str:
     """Convert WebVTT timestamp (HH:MM:SS.mmm or MM:SS.mmm) to SRT format (HH:MM:SS,mmm)."""
     ts = ts.strip().replace(".", ",")
@@ -670,7 +787,9 @@ def get_chrome_cookies_temp_file() -> tuple[str, str] | None:
                         "SELECT host_key, name, path, is_secure, expires_utc, encrypted_value FROM cookies"
                     )
                 else:
-                    cursor.execute("SELECT host, name, path, isSecure, expiry, value FROM moz_cookies")
+                    cursor.execute(
+                        "SELECT host, name, path, isSecure, expiry, value FROM moz_cookies"
+                    )
                 rows = cursor.fetchall()
                 conn.close()
                 if os.path.exists(temp_db_path):
@@ -690,11 +809,15 @@ def get_chrome_cookies_temp_file() -> tuple[str, str] | None:
                             "SELECT host_key, name, path, is_secure, expires_utc, encrypted_value FROM cookies"
                         )
                     else:
-                        cursor.execute("SELECT host, name, path, isSecure, expiry, value FROM moz_cookies")
+                        cursor.execute(
+                            "SELECT host, name, path, isSecure, expiry, value FROM moz_cookies"
+                        )
                     rows = cursor.fetchall()
                     conn.close()
                 except Exception as db_err:
-                    console.print(f"[dim]Failed direct connection to locked database {b['display']}: {db_err}[/dim]")
+                    console.print(
+                        f"[dim]Failed direct connection to locked database {b['display']}: {db_err}[/dim]"
+                    )
                     continue
 
             # --- Chromium-based Browser Parsing ---
