@@ -5,17 +5,31 @@
     "status": "completed",
     "progress": 100,
     "started_at": null,
-    "updated_at": "2026-08-13T11:42:15.585886"
+    "updated_at": "2026-08-15T12:17:53.234190"
   },
   "files_mapping": {
     "agent/memory/lessons.json": "Modified (M)",
+    "Script/anikoto-downloader-v2.user.js": "Modified (M)",
+    "pyproject.toml": "Modified (M)",
     "run.bat": "Modified (M)",
-    "run_anikoto.bat": "Modified (M)",
-    "src/downloader/anikoto.py": "Modified (M)",
+    "src/downloader/__init__.py": "Modified (M)",
+    "src/downloader/animecube.py": "Modified (M)",
     "src/downloader/core.py": "Modified (M)",
+    "src/downloader/hls_downloader.py": "Modified (M)",
+    "src/downloader/subtitle_scraper.py": "Modified (M)",
     "src/downloader/utils.py": "Modified (M)",
-    "tests/test_spanish_subtitles.py": "Modified (M)",
-    "Script/anikoto-downloader-v2.user.js": "Modified (??)"
+    "tests/test_memory_harness.py": "Modified (M)",
+    "tests/test_part_offset.py": "Modified (M)",
+    "AUDIT_LOG.md": "Modified (??)",
+    "docs/context_20260815045850.md": "Modified (??)",
+    "docs/context_20260821085014.md": "Modified (??)",
+    "run_allwish.bat": "Modified (??)",
+    "run_animesuge.bat": "Modified (??)",
+    "src/downloader/allwish.py": "Modified (??)",
+    "src/downloader/animesuge.py": "Modified (??)",
+    "task.md": "Modified (??)",
+    "tests/test_allwish.py": "Modified (??)",
+    "tests/test_animesuge.py": "Modified (??)"
   },
   "active_subagents": [],
   "milestones": []

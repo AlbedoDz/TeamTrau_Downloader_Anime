@@ -13,13 +13,11 @@ from downloader.utils import HttpClient, console
 class MultiThreadedHLSDownloader:
     """Fast concurrent HLS segment downloader with automatic remuxing."""
 
-    def __init__(self, http_client: HttpClient, max_workers: int = 16):
+    def __init__(self, http_client: HttpClient, max_workers: int = 4):
         self.http = http_client
         self.max_workers = max_workers
 
-    def download_stream(
-        self, m3u8_url: str, dest_path: str, referer: str | None = None
-    ) -> bool:
+    def download_stream(self, m3u8_url: str, dest_path: str, referer: str | None = None) -> bool:
         """Download HLS stream fragments in parallel and remux to destination MP4."""
         console.print(
             f"[info]Multi-threaded HLS Downloader ({self.max_workers} workers): "
@@ -52,9 +50,14 @@ class MultiThreadedHLSDownloader:
 
                 def download_fragment(idx: int, frag_url: str) -> bool:
                     frag_file = os.path.join(temp_dir, f"seg_{idx:05d}.ts")
-                    for _attempt in range(3):
+                    for attempt in range(5):
                         try:
-                            f_res = self.http.get(frag_url, referer=referer, rate_limit=False)
+                            import time
+
+                            time.sleep(0.1 + 0.5 * attempt)
+                            f_res = self.http.get(
+                                frag_url, referer=referer, retries=2, delay=2.0, rate_limit=False
+                            )
                             if f_res.status_code == 200 and f_res.content:
                                 with open(frag_file, "wb") as f:
                                     f.write(f_res.content)

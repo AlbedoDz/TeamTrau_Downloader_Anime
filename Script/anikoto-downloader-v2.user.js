@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Anikoto Subtitle & Video Downloader v2
 // @namespace    http://tampermonkey.net/
-// @version      2.1.0
-// @description  Batch download subtitles (SRT/VTT) with smart language prioritization (English, Spanish Latin America es-LA, Spanish Spain es-ES, All Subs) supporting 100+ multi-page episodes and 720p/1080p video extraction for anikototv.to
+// @version      2.2.0
+// @description  High-performance batch subtitle downloader for anikototv.to with smart language classification (es-LA, es-ES, EN, All), Megaplay real-id resolver, multi-server fail-over, and full multi-page episode range support
 // @author       TeamTrau & Antigravity
 // @match        *://anikototv.to/*
 // @match        *://*/*
@@ -597,9 +597,9 @@
         let bulkCancel = false;
 
         // Settings (Persisted in localStorage)
-        let selectedLangMode = localStorage.getItem('anikoto_v2_lang_mode') || 'en';
+        let selectedLangMode = localStorage.getItem('anikoto_v2_lang_mode') || 'es-la';
         let selectedFormat = localStorage.getItem('anikoto_v2_format') || 'srt';
-        let selectedScope = localStorage.getItem('anikoto_v2_scope') || 'all'; // 'all', 'current', 'custom'
+        let selectedScope = localStorage.getItem('anikoto_v2_scope') || 'all';
         let customRangeText = localStorage.getItem('anikoto_v2_custom_range') || '';
 
         hookNetwork();
@@ -635,14 +635,15 @@
             }
         });
 
-        // GreaseMonkey Request with retry
-        function GM_xmlhttpRequestWithRetry(options, retries = 4, initialDelay = 5000) {
+        // GreaseMonkey Request with retry & strict timeout
+        function GM_xmlhttpRequestWithRetry(options, retries = 3, initialDelay = 3000) {
             return new Promise((resolve, reject) => {
                 let attempt = 0;
                 let currentDelay = initialDelay;
 
                 function makeRequest() {
-                    GM_xmlhttpRequest({
+                    const reqOptions = {
+                        timeout: 12000,
                         ...options,
                         onload: function(res) {
                             if (res.status === 429 || res.status === 403) {
@@ -664,7 +665,7 @@
                                 return;
                             }
                             if (options.onerror) options.onerror(err);
-                            reject(err);
+                            resolve({ status: 500, error: err });
                         },
                         ontimeout: function() {
                             if (attempt < retries - 1) {
@@ -674,15 +675,16 @@
                                 return;
                             }
                             if (options.ontimeout) options.ontimeout();
-                            reject(new Error('Timeout'));
+                            resolve({ status: 408, error: 'Timeout' });
                         }
-                    });
+                    };
+                    GM_xmlhttpRequest(reqOptions);
                 }
                 makeRequest();
             });
         }
 
-        async function fetchInternal(url, retries = 4, delay = 5000) {
+        async function fetchInternal(url, retries = 3, delay = 3000) {
             const absoluteUrl = url.startsWith('http') ? url : window.location.origin + url;
             const res = await GM_xmlhttpRequestWithRetry({
                 method: 'GET',
@@ -703,16 +705,57 @@
             return JSON.parse(res.responseText);
         }
 
+        function parseSeriesAndSeason(rawTitle, url = window.location.href) {
+            let cleanTitle = (rawTitle || '').replace(/\s*-\s*Watch\s*.*$/i, '')
+                                             .replace(/\s*Watch\s*.*$/i, '')
+                                             .replace(/\s*-\s*Anikoto.*$/i, '')
+                                             .replace(/\s*Anime\s*Online.*$/i, '')
+                                             .trim();
+
+            let season = 1;
+            const mUrlOrd = url.match(/(\d+)(?:st|nd|rd|th)?[-_]?season/i);
+            const mTitleOrd = cleanTitle.match(/(\d+)(?:st|nd|rd|th)?\s*(?:season|series|ss)/i);
+
+            if (mUrlOrd) {
+                season = parseInt(mUrlOrd[1], 10);
+            } else if (mTitleOrd) {
+                season = parseInt(mTitleOrd[1], 10);
+            } else {
+                const mUrl = url.match(/season[-_]?(\d+)/i);
+                if (mUrl) {
+                    season = parseInt(mUrl[1], 10);
+                } else {
+                    const mTitle = cleanTitle.match(/(?:season|series|ss)\s*[-_]?\s*(\d+)/i);
+                    if (mTitle) {
+                        season = parseInt(mTitle[1], 10);
+                    }
+                }
+            }
+
+            if (isNaN(season) || season < 1) season = 1;
+
+            // Remove season text from series folder title
+            cleanTitle = cleanTitle.replace(/\s*\d+(?:st|nd|rd|th)?\s*(?:season|series|ss)/gi, '')
+                                   .replace(/\s*(?:season|series|ss)\s*[-_]?\s*\d+/gi, '')
+                                   .trim();
+
+            const sanitizedTitle = cleanTitle.replace(/[\\/*?:"<>|]/g, '').trim().replace(/\s+/g, ' ') || 'Anime_Download';
+            const seasonFolder = `Season ${String(season).padStart(2, '0')}`;
+            const seasonCode = `s${String(season).padStart(2, '0')}`;
+
+            return {
+                seriesTitle: sanitizedTitle,
+                season: season,
+                seasonFolder: seasonFolder,
+                seasonCode: seasonCode
+            };
+        }
+
         function getCleanAnimeFolderName() {
             const h1 = document.querySelector('h1.film-name, .film-info h1, .anisc-detail .film-name, h1.title');
-            let raw = h1 ? h1.innerText : document.title;
-            raw = raw.replace(/\s*-\s*Watch\s*.*$/i, '')
-                     .replace(/\s*Watch\s*.*$/i, '')
-                     .replace(/\s*-\s*Anikoto.*$/i, '')
-                     .replace(/\s*Anime\s*Online.*$/i, '')
-                     .trim();
-            let sanitized = raw.replace(/[\\/*?:"<>|]/g, '').trim().replace(/\s+/g, ' ');
-            return sanitized || 'Anime_Download';
+            const raw = h1 ? h1.innerText : document.title;
+            const seriesInfo = parseSeriesAndSeason(raw, window.location.href);
+            return seriesInfo.seriesTitle;
         }
 
         function getEpisodeLabel(epNum, rawText = '') {
@@ -723,10 +766,14 @@
             let epNumPadded = epNumClean;
             if (epNumPadded.length < 2) epNumPadded = '0' + epNumPadded;
 
+            const h1 = document.querySelector('h1.film-name, .film-info h1, .anisc-detail .film-name, h1.title');
+            const rawTitle = h1 ? h1.innerText : document.title;
+            const seriesInfo = parseSeriesAndSeason(rawTitle, window.location.href);
+
             let cleanTitle = (rawText || '').trim().replace(/\s+/g, ' ');
             cleanTitle = cleanTitle.replace(/^(?:ep|episode)?\s*\d+\s*[:.-]?\s*/i, '').trim();
 
-            let epLabel = `s01e${epNumPadded}`;
+            let epLabel = `${seriesInfo.seasonCode}e${epNumPadded}`;
             if (cleanTitle && cleanTitle.toLowerCase() !== `ep ${epNumClean}` && cleanTitle.toLowerCase() !== `episode ${epNumClean}`) {
                 const safeTitle = cleanTitle.replace(/[\\/*?:"<>|]/g, '').trim();
                 if (safeTitle) epLabel += ` - ${safeTitle}`;
@@ -735,7 +782,10 @@
         }
 
         function getEpisodeTitle() {
-            const animeTitle = getCleanAnimeFolderName();
+            const h1 = document.querySelector('h1.film-name, .film-info h1, .anisc-detail .film-name, h1.title');
+            const rawTitle = h1 ? h1.innerText : document.title;
+            const seriesInfo = parseSeriesAndSeason(rawTitle, window.location.href);
+
             let epActive = document.querySelector('#w-episodes .ep-item.active, #w-episodes a.active, .episodes a.active');
             let epSlug = epActive ? epActive.getAttribute('data-slug') : '';
             if (!epSlug) epSlug = document.querySelector('#w-report-ep-num')?.value || '01';
@@ -749,7 +799,7 @@
             }
             if (epNumClean.length < 2) epNumClean = '0' + epNumClean;
 
-            return `${animeTitle}-s01e${epNumClean}`;
+            return `${seriesInfo.seriesTitle} - ${seriesInfo.seasonCode}e${epNumClean}`;
         }
 
         function updateBadge(epNum, text, bg, color) {
@@ -875,8 +925,131 @@
             });
         }
 
+        /**
+         * Resolve real stream sources API endpoint (Handling Megaplay data-id extraction & Fallbacks)
+         */
+        async function resolveSourcesApiUrl(playerUrl) {
+            if (!playerUrl) return '';
+            const playerObj = new URL(playerUrl);
+            let apiUrl = '';
+
+            // Check if Megaplay / Vidwish / Megacloud embed requires real data-id
+            if (playerUrl.includes('megaplay.buzz') || playerUrl.includes('vidwish.live') || playerUrl.includes('/stream/s-')) {
+                try {
+                    const embedRes = await GM_xmlhttpRequestWithRetry({
+                        method: 'GET',
+                        url: playerUrl,
+                        headers: {
+                            'User-Agent': navigator.userAgent,
+                            'Referer': window.location.href
+                        }
+                    }, 2, 2000);
+
+                    if (embedRes && embedRes.status === 200 && embedRes.responseText) {
+                        const html = embedRes.responseText;
+                        const parser = new DOMParser();
+                        const doc = parser.parseFromString(html, 'text/html');
+                        const playerDiv = doc.querySelector('#megaplay-player[data-id], .fix-area[data-id], [data-id]');
+                        let realId = playerDiv ? playerDiv.getAttribute('data-id') : null;
+                        if (!realId) {
+                            const m = html.match(/data-id=["'](\d+)["']/);
+                            if (m) realId = m[1];
+                        }
+                        if (realId) {
+                            apiUrl = `${playerObj.origin}/stream/getSources?id=${realId}`;
+                            return apiUrl;
+                        }
+                    }
+                } catch (e) {
+                    console.warn('[Anikoto Subtitle v2] Embed page fetch failed', e);
+                }
+            }
+
+            // Fallback: standard regex matches
+            const streamMatch = playerObj.pathname.match(/\/stream\/s-\d+\/(\d+)/);
+            if (streamMatch) {
+                apiUrl = `${playerObj.origin}/stream/getSources?id=${streamMatch[1]}`;
+            } else if (playerObj.pathname.includes('getSources') || playerObj.pathname.includes('sources')) {
+                apiUrl = playerUrl;
+            } else {
+                const embedMatch = playerObj.pathname.match(/(\/embed-[^\/]+\/e-[^\/]+\/)([^\/?#]+)/) ||
+                                   playerObj.pathname.match(/(\/e-[^\/]+\/)([^\/?#]+)/);
+                if (embedMatch) {
+                    apiUrl = `${playerObj.origin}${embedMatch[1]}getSources?id=${embedMatch[2]}`;
+                }
+            }
+            return apiUrl;
+        }
+
+        /**
+         * Poka-Yoke file saver (Blob URL + <a> download click with 2s safety timeout)
+         */
+        function saveSubtitleFile(filename, text, extension) {
+            return new Promise((resolve) => {
+                try {
+                    const mimeType = extension === 'srt' ? 'application/x-subrip;charset=utf-8' : 'text/vtt;charset=utf-8';
+                    const blob = new Blob([text], { type: mimeType });
+                    const blobUrl = URL.createObjectURL(blob);
+
+                    const h1 = document.querySelector('h1.film-name, .film-info h1, .anisc-detail .film-name, h1.title');
+                    const rawTitle = h1 ? h1.innerText : document.title;
+                    const seriesInfo = parseSeriesAndSeason(rawTitle, window.location.href);
+
+                    // Sonarr compliant directory: Series Name/Season 01/Filename
+                    const targetName = `${seriesInfo.seriesTitle}/${seriesInfo.seasonFolder}/${filename}`;
+                    let completed = false;
+
+                    const done = (status) => {
+                        if (completed) return;
+                        completed = true;
+                        try { URL.revokeObjectURL(blobUrl); } catch(e){}
+                        resolve(status);
+                    };
+
+                    setTimeout(() => done(true), 2000);
+
+                    try {
+                        if (typeof GM_download === 'function') {
+                            GM_download({
+                                url: blobUrl,
+                                name: targetName,
+                                onload: () => done(true),
+                                onerror: () => {
+                                    const a = document.createElement('a');
+                                    a.href = blobUrl;
+                                    a.download = filename;
+                                    document.body.appendChild(a);
+                                    a.click();
+                                    document.body.removeChild(a);
+                                    done(true);
+                                }
+                            });
+                        } else {
+                            const a = document.createElement('a');
+                            a.href = blobUrl;
+                            a.download = filename;
+                            document.body.appendChild(a);
+                            a.click();
+                            document.body.removeChild(a);
+                            done(true);
+                        }
+                    } catch (err) {
+                        const a = document.createElement('a');
+                        a.href = blobUrl;
+                        a.download = filename;
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                        done(true);
+                    }
+                } catch (e) {
+                    resolve(false);
+                }
+            });
+        }
+
         // ──────────────────────────────────────────────────────────────────────
-        // 5. Bulk Download Logic (Multi-Language, Multi-Page & Robust Fail-over)
+        // 5. Bulk Download Logic (Multi-Language, Multi-Page & Multi-Server Fail-Over)
         // ──────────────────────────────────────────────────────────────────────
 
         async function startBulkDownload() {
@@ -888,7 +1061,7 @@
                 return;
             }
 
-            statusEl.innerText = 'Đang tải danh sách tất cả các tập...';
+            statusEl.innerText = 'Đang tải danh sách tập...';
             const allEpisodes = await fetchAllEpisodesList();
 
             if (allEpisodes.length === 0) {
@@ -953,97 +1126,51 @@
                 }
             }
 
-            async function downloadTracksSequentially(tracksToDownload, playerUrl, playerObj, filenamePrefix, epNum) {
+            async function downloadTracksSequentially(tracksToDownload, playerUrl, filenamePrefix, epNum) {
                 const results = [];
                 for (let i = 0; i < tracksToDownload.length; i++) {
                     if (bulkCancel) return results;
                     if (i > 0) {
-                        const trackDelay = 1200 + Math.random() * 1000;
+                        const trackDelay = 800 + Math.random() * 800;
                         await new Promise(r => setTimeout(r, trackDelay));
                     }
                     const track = tracksToDownload[i];
                     updateStatus(`Ep ${epNum} (${i + 1}/${tracksToDownload.length})... [${index + 1}/${targetEpisodes.length}]`);
 
-                    const success = await new Promise((resolveDl) => {
-                        track.referer = playerUrl;
-                        const ref = getSafeReferer(playerUrl);
-                        let origin = playerObj.origin;
-                        try {
-                            if (ref) origin = new URL(ref).origin;
-                        } catch (e) {}
+                    const ref = getSafeReferer(playerUrl);
+                    let origin = '';
+                    try { if (ref) origin = new URL(ref).origin; } catch (e) {}
 
-                        const dlHeaders = {
-                            'User-Agent': navigator.userAgent,
-                            'Referer': ref
-                        };
-                        if (origin) dlHeaders['Origin'] = origin;
+                    const dlHeaders = { 'User-Agent': navigator.userAgent, 'Referer': ref };
+                    if (origin) dlHeaders['Origin'] = origin;
 
-                        GM_xmlhttpRequestWithRetry({
-                            method: 'GET',
-                            url: track.url,
-                            headers: dlHeaders,
-                            onload: function(dlRes) {
-                                if (dlRes.status !== 200) {
-                                    resolveDl(false);
-                                    return;
-                                }
-                                try {
-                                    let text = dlRes.responseText;
-                                    let extension = currentFormat === 'srt' ? 'srt' : 'vtt';
-                                    let mimeType = currentFormat === 'srt' ? 'application/x-subrip' : 'text/vtt';
+                    const dlRes = await GM_xmlhttpRequestWithRetry({
+                        method: 'GET',
+                        url: track.url,
+                        headers: dlHeaders
+                    }, 2, 2000);
 
-                                    if (currentFormat === 'srt') {
-                                        const checkText = text.replace(/^\uFEFF/, '').trim();
-                                        if (checkText.startsWith('WEBVTT') || checkText.includes('-->')) {
-                                            text = convertVttToSrt(text);
-                                        }
-                                    }
+                    if (dlRes && dlRes.status === 200 && dlRes.responseText) {
+                        let text = dlRes.responseText;
+                        let extension = currentFormat === 'srt' ? 'srt' : 'vtt';
 
-                                    const tagInfo = getTrackTagAndDisplay(track);
-                                    const langTag = tagInfo.tag;
-                                    const animeFolder = getCleanAnimeFolderName();
-
-                                    let cleanFilename = '';
-                                    if (tracksToDownload.length === 1) {
-                                        cleanFilename = `${filenamePrefix}.${langTag}.${extension}`.replace(/[\\/:*?"<>|]/g, '_');
-                                    } else {
-                                        const labelClean = (track.label || '').replace(/[\\/:*?"<>|]/g, '_').trim();
-                                        cleanFilename = `${filenamePrefix}.${langTag}.${labelClean}.${extension}`.replace(/[\\/:*?"<>|]/g, '_');
-                                    }
-
-                                    const targetName = `${animeFolder}/${cleanFilename}`;
-                                    const base64Data = btoa(unescape(encodeURIComponent(text)));
-                                    const dataUrl = `data:${mimeType};base64,${base64Data}`;
-
-                                    GM_download({
-                                        url: dataUrl,
-                                        name: targetName,
-                                        onload: function() {
-                                            resolveDl(true);
-                                        },
-                                        onerror: function() {
-                                            const blob = new Blob([text], { type: mimeType });
-                                            const blobUrl = URL.createObjectURL(blob);
-                                            const dlLink = document.createElement('a');
-                                            dlLink.href = blobUrl;
-                                            dlLink.download = cleanFilename;
-                                            document.body.appendChild(dlLink);
-                                            dlLink.click();
-                                            document.body.removeChild(dlLink);
-                                            URL.revokeObjectURL(blobUrl);
-                                            resolveDl(true);
-                                        }
-                                    });
-                                } catch (e) {
-                                    resolveDl(false);
-                                }
-                            },
-                            onerror: function() {
-                                resolveDl(false);
+                        if (currentFormat === 'srt') {
+                            const checkText = text.replace(/^\uFEFF/, '').trim();
+                            if (checkText.startsWith('WEBVTT') || checkText.includes('-->')) {
+                                text = convertVttToSrt(text);
                             }
-                        });
-                    });
-                    results.push(success);
+                        }
+
+                        const tagInfo = getTrackTagAndDisplay(track);
+                        const langTag = tagInfo.tag;
+
+                        // Clean Sonarr format: Anime - s01e01.es-LA.srt
+                        let cleanFilename = `${filenamePrefix}.${langTag}.${extension}`.replace(/[\\/:*?"<>|]/g, '_');
+                        const saved = await saveSubtitleFile(cleanFilename, text, extension);
+                        results.push(saved);
+                    } else {
+                        results.push(false);
+                    }
                 }
                 return results;
             }
@@ -1087,20 +1214,17 @@
                                              document.querySelector('iframe[src*="rapidcloud.cc"]') ||
                                              document.querySelector('iframe');
                         const playerUrl = playerIframe?.src || window.location.href;
-                        let playerObj = window.location;
-                        try { playerObj = new URL(playerUrl); } catch(e){}
 
-                        downloadTracksSequentially(matchedTracks, playerUrl, playerObj, filenamePrefix, epNum).then(results => {
-                            const successCount = results.filter(r => r === true).length;
-                            if (successCount > 0) {
-                                successfulDls.push(epNum);
-                                updateBadge(epNum, `${currentMode.toUpperCase()} (${successCount})`, 'rgba(76, 175, 80, 0.2)', '#4caf50');
-                            } else {
-                                failedDls.push(epNum);
-                                updateBadge(epNum, 'Lỗi', 'rgba(244, 67, 54, 0.2)', '#f44336');
-                            }
-                            nextEpisode();
-                        });
+                        const results = await downloadTracksSequentially(matchedTracks, playerUrl, filenamePrefix, epNum);
+                        const successCount = results.filter(r => r === true).length;
+                        if (successCount > 0) {
+                            successfulDls.push(epNum);
+                            updateBadge(epNum, `${currentMode.toUpperCase()} (${successCount})`, 'rgba(76, 175, 80, 0.2)', '#4caf50');
+                        } else {
+                            failedDls.push(epNum);
+                            updateBadge(epNum, 'Lỗi', 'rgba(244, 67, 54, 0.2)', '#f44336');
+                        }
+                        nextEpisode();
                         return;
                     }
                 }
@@ -1112,7 +1236,7 @@
                     const parser = new DOMParser();
                     const doc = parser.parseFromString(html, 'text/html');
 
-                    // Prioritize SUB server group first, fallback to generic
+                    // Candidate server elements (prioritizing SUB)
                     let serverLis = Array.from(doc.querySelectorAll('.servers .type[data-type="sub"] li[data-link-id]'));
                     if (serverLis.length === 0) {
                         serverLis = Array.from(doc.querySelectorAll('li[data-link-id]'));
@@ -1125,95 +1249,76 @@
                         return;
                     }
 
-                    // Sort servers by priority: Vidstream-2 -> Vidstream -> HD-1 -> VidPlay-1 -> Megacloud
-                    let selectedLi = serverLis.find(li => li.innerText.includes('Vidstream-2')) ||
-                                     serverLis.find(li => li.innerText.includes('Vidstream')) ||
-                                     serverLis.find(li => li.innerText.includes('HD-1')) ||
-                                     serverLis.find(li => li.innerText.includes('VidPlay-1')) ||
-                                     serverLis.find(li => li.innerText.includes('Megacloud')) ||
-                                     serverLis[0];
+                    // Sort candidates by priority
+                    serverLis.sort((a, b) => {
+                        const score = (li) => {
+                            const txt = li.innerText;
+                            if (txt.includes('Vidstream-2')) return 0;
+                            if (txt.includes('Vidstream')) return 1;
+                            if (txt.includes('HD-1')) return 2;
+                            if (txt.includes('VidPlay-1')) return 3;
+                            if (txt.includes('Megacloud')) return 4;
+                            return 5;
+                        };
+                        return score(a) - score(b);
+                    });
 
-                    const linkId = selectedLi.getAttribute('data-link-id');
-                    const getUrl = `/ajax/server?get=${linkId}`;
-                    const getJson = await fetchInternal(getUrl);
-                    let playerUrl = getJson.result;
-                    if (playerUrl && typeof playerUrl === 'object') {
-                        playerUrl = playerUrl.url;
-                    }
+                    let resolvedSubtitles = false;
 
-                    if (!playerUrl) {
-                        failedDls.push(epNum);
-                        updateBadge(epNum, 'No Sub', 'rgba(244, 67, 54, 0.2)', '#f44336');
-                        nextEpisode();
-                        return;
-                    }
+                    // Try candidate servers sequentially until subtitles are resolved
+                    for (const candidateLi of serverLis) {
+                        if (bulkCancel) break;
 
-                    let apiUrl = '';
-                    const playerObj = new URL(playerUrl);
-                    const streamMatch = playerObj.pathname.match(/\/stream\/s-\d+\/(\d+)/);
-                    if (streamMatch) {
-                        apiUrl = `${playerObj.origin}/stream/getSources?id=${streamMatch[1]}`;
-                    } else if (playerObj.pathname.includes('getSources') || playerObj.pathname.includes('sources')) {
-                        apiUrl = playerUrl;
-                    }
+                        const linkId = candidateLi.getAttribute('data-link-id');
+                        const getUrl = `/ajax/server?get=${linkId}`;
+                        const getJson = await fetchInternal(getUrl);
+                        let playerUrl = getJson.result;
+                        if (playerUrl && typeof playerUrl === 'object') {
+                            playerUrl = playerUrl.url;
+                        }
 
-                    if (!apiUrl) {
-                        failedDls.push(epNum);
-                        updateBadge(epNum, 'No Sub', 'rgba(244, 67, 54, 0.2)', '#f44336');
-                        nextEpisode();
-                        return;
-                    }
+                        if (!playerUrl) continue;
 
-                    GM_xmlhttpRequestWithRetry({
-                        method: 'GET',
-                        url: apiUrl,
-                        headers: {
-                            'X-Requested-With': 'XMLHttpRequest',
-                            'Referer': playerUrl
-                        },
-                        onload: function(srcRes) {
-                            if (srcRes.status !== 200) {
-                                failedDls.push(epNum);
-                                updateBadge(epNum, 'Lỗi API', 'rgba(244, 67, 54, 0.2)', '#f44336');
-                                nextEpisode();
-                                return;
+                        const apiUrl = await resolveSourcesApiUrl(playerUrl);
+                        if (!apiUrl) continue;
+
+                        const srcRes = await GM_xmlhttpRequestWithRetry({
+                            method: 'GET',
+                            url: apiUrl,
+                            headers: {
+                                'X-Requested-With': 'XMLHttpRequest',
+                                'Referer': playerUrl
                             }
+                        }, 2, 2000);
 
+                        if (srcRes && srcRes.status === 200 && srcRes.responseText) {
                             try {
                                 const srcJson = JSON.parse(srcRes.responseText);
                                 const tracks = findSubtitlesInObject(srcJson);
                                 const matchedTracks = filterTracksByMode(tracks, currentMode);
 
-                                if (matchedTracks.length === 0) {
-                                    failedDls.push(epNum);
-                                    updateBadge(epNum, `No ${currentMode.toUpperCase()}`, 'rgba(244, 67, 54, 0.2)', '#f44336');
-                                    nextEpisode();
-                                    return;
-                                }
-
-                                downloadTracksSequentially(matchedTracks, playerUrl, playerObj, filenamePrefix, epNum).then(results => {
+                                if (matchedTracks.length > 0) {
+                                    const results = await downloadTracksSequentially(matchedTracks, playerUrl, filenamePrefix, epNum);
                                     const successCount = results.filter(r => r === true).length;
                                     if (successCount > 0) {
                                         successfulDls.push(epNum);
                                         updateBadge(epNum, `${currentMode.toUpperCase()} (${successCount})`, 'rgba(76, 175, 80, 0.2)', '#4caf50');
-                                    } else {
-                                        failedDls.push(epNum);
-                                        updateBadge(epNum, 'Lỗi', 'rgba(244, 67, 54, 0.2)', '#f44336');
+                                        resolvedSubtitles = true;
+                                        break;
                                     }
-                                    nextEpisode();
-                                });
+                                }
                             } catch (e) {
-                                failedDls.push(epNum);
-                                updateBadge(epNum, 'Lỗi JSON', 'rgba(244, 67, 54, 0.2)', '#f44336');
-                                nextEpisode();
+                                console.warn('[Anikoto Subtitle v2] JSON parse failed for server', candidateLi.innerText);
                             }
-                        },
-                        onerror: function() {
-                            failedDls.push(epNum);
-                            updateBadge(epNum, 'Lỗi Mạng', 'rgba(244, 67, 54, 0.2)', '#f44336');
-                            nextEpisode();
                         }
-                    });
+                    }
+
+                    if (!resolvedSubtitles) {
+                        failedDls.push(epNum);
+                        updateBadge(epNum, `No ${currentMode.toUpperCase()}`, 'rgba(244, 67, 54, 0.2)', '#f44336');
+                    }
+
+                    nextEpisode();
 
                 } catch (e) {
                     failedDls.push(epNum);
@@ -1224,18 +1329,14 @@
 
             function nextEpisode() {
                 index++;
-                const bulkDelay = 3000 + Math.random() * 2000;
+                const bulkDelay = 2000 + Math.random() * 1500;
                 setTimeout(processNext, bulkDelay);
             }
 
             processNext();
         }
 
-        // ──────────────────────────────────────────────────────────────────────
-        // 6. Single Episode Subtitle Handlers
-        // ──────────────────────────────────────────────────────────────────────
-
-        function downloadSingleSubtitle(track, forceFormat) {
+        async function downloadSingleSubtitle(track, forceFormat) {
             const headers = { 'User-Agent': navigator.userAgent };
             let rawReferer = track.referer;
             if (!rawReferer) {
@@ -1252,63 +1353,36 @@
                 try { headers["Origin"] = new URL(ref).origin; } catch (e) {}
             }
 
-            GM_xmlhttpRequestWithRetry({
+            const response = await GM_xmlhttpRequestWithRetry({
                 method: "GET",
                 url: track.url,
-                headers: headers,
-                onload: function(response) {
-                    if (response.status !== 200) {
-                        alert('Không thể tải subtitle. Mã lỗi: ' + response.status);
-                        return;
-                    }
-                    try {
-                        let text = response.responseText;
-                        let extension = forceFormat === 'srt' ? 'srt' : 'vtt';
-                        let mimeType = forceFormat === 'srt' ? 'application/x-subrip' : 'text/vtt';
+                headers: headers
+            }, 2, 2000);
 
-                        if (forceFormat === 'srt') {
-                            const checkText = text.replace(/^\uFEFF/, '').trim();
-                            if (checkText.startsWith('WEBVTT') || checkText.includes('-->')) {
-                                text = convertVttToSrt(text);
-                            }
+            if (response && response.status === 200 && response.responseText) {
+                try {
+                    let text = response.responseText;
+                    let extension = forceFormat === 'srt' ? 'srt' : 'vtt';
+
+                    if (forceFormat === 'srt') {
+                        const checkText = text.replace(/^\uFEFF/, '').trim();
+                        if (checkText.startsWith('WEBVTT') || checkText.includes('-->')) {
+                            text = convertVttToSrt(text);
                         }
-
-                        const tagInfo = getTrackTagAndDisplay(track);
-                        const labelClean = (track.label || '').replace(/[\\/:*?"<>|]/g, '_').trim();
-                        const animeFolder = getCleanAnimeFolderName();
-                        const epTitle = getEpisodeTitle();
-                        const cleanFilename = `${epTitle}.${tagInfo.tag}.${labelClean}.${extension}`.replace(/[\\/:*?"<>|]/g, '_');
-                        const targetName = `${animeFolder}/${cleanFilename}`;
-
-                        const base64Data = btoa(unescape(encodeURIComponent(text)));
-                        const dataUrl = `data:${mimeType};base64,${base64Data}`;
-
-                        GM_download({
-                            url: dataUrl,
-                            name: targetName,
-                            onload: function() {
-                                console.log('[Anikoto Subtitle v2] Download complete:', targetName);
-                            },
-                            onerror: function() {
-                                const blob = new Blob([text], { type: mimeType });
-                                const blobUrl = URL.createObjectURL(blob);
-                                const a = document.createElement('a');
-                                a.href = blobUrl;
-                                a.download = cleanFilename;
-                                document.body.appendChild(a);
-                                a.click();
-                                document.body.removeChild(a);
-                                URL.revokeObjectURL(blobUrl);
-                            }
-                        });
-                    } catch (e) {
-                        alert('Lỗi xử lý file subtitle: ' + e.message);
                     }
-                },
-                onerror: function() {
-                    alert('Lỗi mạng khi tải file phụ đề.');
+
+                    const tagInfo = getTrackTagAndDisplay(track);
+                    const epTitle = getEpisodeTitle();
+                    const cleanFilename = `${epTitle}.${tagInfo.tag}.${extension}`.replace(/[\\/:*?"<>|]/g, '_');
+
+                    await saveSubtitleFile(cleanFilename, text, extension);
+                    console.log('[Anikoto Subtitle v2] Single download complete:', cleanFilename);
+                } catch (e) {
+                    alert('Lỗi xử lý file subtitle: ' + e.message);
                 }
-            });
+            } else {
+                alert('Lỗi mạng khi tải file phụ đề.');
+            }
         }
 
         // ──────────────────────────────────────────────────────────────────────
@@ -1554,8 +1628,8 @@
                     <div>
                         <div style="font-size: 10px; color: #94a3b8; margin-bottom: 3px; font-weight: 600;">NGÔN NGỮ BULK:</div>
                         <select class="ani-sub-select ani-sub-lang-select">
-                            <option value="en" ${selectedLangMode === 'en' ? 'selected' : ''}>English (EN)</option>
                             <option value="es-la" ${selectedLangMode === 'es-la' ? 'selected' : ''}>Spanish (es-LA) [Latin]</option>
+                            <option value="en" ${selectedLangMode === 'en' ? 'selected' : ''}>English (EN)</option>
                             <option value="es-es" ${selectedLangMode === 'es-es' ? 'selected' : ''}>Spanish (es-ES) [Spain]</option>
                             <option value="es-all" ${selectedLangMode === 'es-all' ? 'selected' : ''}>Tất cả Spanish (LA + ES)</option>
                             <option value="multi_en_es" ${selectedLangMode === 'multi_en_es' ? 'selected' : ''}>Song ngữ (EN + es-LA)</option>

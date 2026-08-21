@@ -9,9 +9,7 @@ class SubtitleScraper:
     def __init__(self, http_client: HttpClient):
         self.http = http_client
 
-    def search_subtitles(
-        self, anime_title: str, episode_num: str, lang: str = "en"
-    ) -> list[dict]:
+    def search_subtitles(self, anime_title: str, episode_num: str, lang: str = "en") -> list[dict]:
         """Attempt auto-search for standalone subtitles across public repositories."""
         subtitles = []
         console.print(

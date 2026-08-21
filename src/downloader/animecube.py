@@ -26,7 +26,7 @@ class AnimeCubeExtractor(BaseExtractor):
 
     def get_anime_details(self, url: str) -> dict:
         """Extract anime title and complete episode list from Next.js state."""
-        url = url.strip('"\'')
+        url = url.strip("\"'")
         parsed = urlparse(url)
         path_parts = [p for p in parsed.path.split("/") if p]
         anime_slug = path_parts[1] if len(path_parts) > 1 else "unknown"

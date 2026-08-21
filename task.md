@@ -1,0 +1,31 @@
+# Danh Sách Nhiệm Vụ (Task List)
+
+- [x] Cập nhật `src/downloader/anikoto.py` hỗ trợ chọn phụ đề Spanish
+  - [x] Nhận diện `"es"`, `"spa"`, `"spanish"`, `"espanol"`, `"español"`
+  - [x] Tránh nhận diện nhầm tiếng Bồ Đào Nha
+  - [x] Xây dựng thứ tự ưu tiên (Latin America > CR > Spain/Standard)
+- [x] Thống nhất chuẩn tên IETF `es-LA` (Mỹ Latinh) thay cho `es-419`
+  - [x] Nhận diện `Spanish (- Spanish[LAT])`, `Spanish (- Español (LA))`, `Latin America`, `Latam` -> `es-LA`
+  - [x] Nhận diện `Spanish (- Spanish[ESP])`, `Spanish (- Español (ES))`, `Spain`, `Castellano` -> `es-ES`
+  - [x] Chuẩn hóa hàm `classify_spanish_variant()` trong `utils.py` (Kaizen & Poka-Yoke)
+- [x] Cập nhật `src/downloader/core.py` hỗ trợ fallback & đặt tên file phụ đề
+  - [x] Chuẩn hóa `resolve_sub_lang_tag` sang định dạng IETF (`es-LA`, `es-ES`, `es`, `en`, `vi`)
+  - [x] Cô lập kiểm tra file tồn tại theo danh sách candidate tag tương ứng với ngôn ngữ yêu cầu (`get_target_lang_candidate_tags`)
+  - [x] Lưu server lựa chọn trong batch interactive server selection
+- [x] Cập nhật launcher scripts (`run_anikoto.bat`, `run.bat`)
+  - [x] Thêm lựa chọn menu phụ đề Latin America `es` (`es-LA`) và Spain `es-es` (`es-ES`)
+- [x] Triển khai Extractor `AllWishExtractor` (`src/downloader/allwish.py`)
+  - [x] Reverse-engineer AJAX API `/ajax/episode/list` & VRF generation (RC4 simple-hash)
+  - [x] Giải mã Megaplay embed & bóc tách `getSources` API (HLS + phụ đề)
+  - [x] Lọc và ưu tiên ngôn ngữ phụ đề (CR, Forced, Spanish variants)
+- [x] Triển khai Extractor `AnimeSugeExtractor` (`src/downloader/animesuge.py`)
+  - [x] Hỗ trợ domain `animesuge.cz`
+  - [x] Bóc tách stream HLS và phụ đề đa ngôn ngữ
+- [x] Đăng ký module trong `src/downloader/__init__.py`
+- [x] Viết unit tests & live resolving tests (`tests/test_allwish.py`, `tests/test_animesuge.py`)
+- [x] Xác minh và Chạy thử
+  - [x] Linter & Formatter (`ruff check`, `ruff format`): PASS 100%
+  - [x] Unit test suite (`pytest`): PASS 32/32 (100%)
+  - [x] Live URL 1 (`all-wish.me/watch/world-is-dancing-mof9c/ep-8`): PASS (HTTP 200 Stream)
+  - [x] Live URL 2 (`animesuge.cz/anime/world-is-dancing-wt8rp/ep-4`): PASS (HTTP 200 Stream)
+

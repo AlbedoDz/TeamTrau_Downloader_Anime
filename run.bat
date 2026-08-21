@@ -30,7 +30,9 @@ echo Select Site Download Module:
 echo.
 echo   [1] AnimeCube Module (animecube.live)
 echo   [2] AniKoto Module   (anikototv.to)
-echo   [3] Auto-Detect Site (Enter any supported Anime URL)
+echo   [3] AllWish Module   (all-wish.me)
+echo   [4] AnimeSuge Module (animesuge.cz)
+echo   [5] Auto-Detect Site (Enter any supported Anime URL)
 echo   [0] Exit Launcher
 echo.
 set /p LAUNCHER_CHOICE="Enter Choice [1]: "
@@ -44,7 +46,15 @@ if "!LAUNCHER_CHOICE!"=="2" (
     call run_anikoto.bat
     goto :MENU
 )
-if "!LAUNCHER_CHOICE!"=="3" goto :AUTO_DETECT
+if "!LAUNCHER_CHOICE!"=="3" (
+    call run_allwish.bat
+    goto :MENU
+)
+if "!LAUNCHER_CHOICE!"=="4" (
+    call run_animesuge.bat
+    goto :MENU
+)
+if "!LAUNCHER_CHOICE!"=="5" goto :AUTO_DETECT
 if "!LAUNCHER_CHOICE!"=="0" exit /b 0
 
 :AUTO_DETECT

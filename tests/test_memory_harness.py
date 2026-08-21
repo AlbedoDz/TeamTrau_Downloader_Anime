@@ -23,11 +23,20 @@ def test_state_graph(tmp_path: Path) -> None:
     assert sg.nodes["node-1"]["parent_id"] is None
     assert sg.nodes["node-1"]["affected_files"] == ["file.txt"]
 
+
 def test_bm25_search() -> None:
     """Verifies that the BM25 Search ranks matching documents higher."""
     documents = [
-        {"topic": "python async", "lesson": "Use asyncio.gather for concurrent tasks.", "tags": ["python", "async"]},
-        {"topic": "react component", "lesson": "Use React.memo to prevent unnecessary re-renders.", "tags": ["react", "frontend"]}
+        {
+            "topic": "python async",
+            "lesson": "Use asyncio.gather for concurrent tasks.",
+            "tags": ["python", "async"],
+        },
+        {
+            "topic": "react component",
+            "lesson": "Use React.memo to prevent unnecessary re-renders.",
+            "tags": ["react", "frontend"],
+        },
     ]
     bm25 = BM25Search(documents)
     # Search for async - doc 0 should rank higher
@@ -39,10 +48,12 @@ def test_bm25_search() -> None:
     assert len(results) > 0
     assert results[0][0] == 1
 
+
 def test_file_deltas() -> None:
     """Verifies that Git file deltas return a parseable dictionary."""
     deltas = get_git_file_deltas()
     assert isinstance(deltas, dict)
+
 
 def test_context_compaction(tmp_path: Path) -> None:
     """Verifies that token estimation correctly checks threshold limits."""
@@ -57,6 +68,7 @@ def test_context_compaction(tmp_path: Path) -> None:
     assert tokens == 200  # 800 // 4
     assert compact
 
+
 def test_orphan_branch_sync(tmp_path: Path) -> None:
     """Verifies that local mock remote setup executes correctly."""
     repo_dir = Path(__file__).parent.parent
@@ -67,5 +79,6 @@ def test_orphan_branch_sync(tmp_path: Path) -> None:
 
     # Clean up mock remote repo
     import shutil
+
     if mock_remote_dir.exists():
         shutil.rmtree(mock_remote_dir)

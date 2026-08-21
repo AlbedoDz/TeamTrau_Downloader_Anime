@@ -13,6 +13,7 @@ class MockResponse:
         self.text = text
         self.status_code = status_code
 
+
 def test_calculate_part_offset() -> None:
     # Instantiate the BatchDownloader
     downloader = BatchDownloader(output_dir=".")
@@ -58,6 +59,7 @@ def test_calculate_part_offset() -> None:
     assert titles[1] == "NEW WORLD MAP"
     assert titles[12] == "The Medusa's True Face"
 
+
 def test_parse_part_number() -> None:
     downloader = BatchDownloader(output_dir=".")
 
@@ -72,6 +74,7 @@ def test_parse_part_number() -> None:
 def test_tvdb_naming_format() -> None:
     # Test that when naming_format is 'tvdb', filenames are slugified correctly and subtitles use the .en.srt suffix.
     import re
+
     # We will simulate the slugification process
     short_series_title = "The Warrior Princess and the Barbaric King"
     season = 1
@@ -110,7 +113,3 @@ def test_jojo_season_mapping() -> None:
     jojo_p4_url = "https://anikototv.to/watch/jojo-s-bizarre-adventure-part-4"
     _, season_p4 = downloader._parse_series_and_season(jojo_p4_title, jojo_p4_url)
     assert season_p4 == 3
-
-
-
-

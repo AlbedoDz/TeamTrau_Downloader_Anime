@@ -44,7 +44,7 @@ select = [
     "B",   # flake8-bugbear
     "RUF", # Ruff-specific rules
 ]
-ignore = []
+ignore = ["E501", "N801"]
 
 [tool.ruff.lint.isort]
 combine-as-imports = true

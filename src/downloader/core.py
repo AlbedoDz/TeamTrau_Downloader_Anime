@@ -403,7 +403,7 @@ class BatchDownloader:
                             if player_origin:
                                 segment_headers["Origin"] = player_origin
 
-                            max_seg_retries = 3
+                            max_seg_retries = 5
                             last_seg_err = None
 
                             for attempt in range(max_seg_retries):
@@ -411,9 +411,9 @@ class BatchDownloader:
                                     return idx, False, ("Cancelled due to DNS error", True)
                                 try:
                                     if attempt == 0:
-                                        time.sleep(random.uniform(0.05, 0.12))
+                                        time.sleep(random.uniform(0.10, 0.25))
                                     else:
-                                        time.sleep(random.uniform(1.0, 2.5) * attempt)
+                                        time.sleep(random.uniform(2.0, 4.5) * attempt)
 
                                     if dns_failed_event.is_set():
                                         return idx, False, ("Cancelled due to DNS error", True)
@@ -421,7 +421,8 @@ class BatchDownloader:
                                     res = self.http.get(
                                         seg_url,
                                         headers=segment_headers,
-                                        retries=2,
+                                        retries=3,
+                                        delay=2.0,
                                         rate_limit=False,
                                     )
                                     if res.status_code != 200 or not res.content:
@@ -444,7 +445,7 @@ class BatchDownloader:
 
                             return idx, False, (str(last_seg_err), False)
 
-                        max_workers = 16
+                        max_workers = 4
                         with ThreadPoolExecutor(max_workers=max_workers) as executor:
                             futures = {
                                 executor.submit(download_segment, i, url): i
@@ -571,7 +572,11 @@ class BatchDownloader:
                     dest_path,
                     "--no-playlist",
                     "--concurrent-fragments",
-                    "5",
+                    "2",
+                    "--fragment-retries",
+                    "15",
+                    "--retry-sleep",
+                    "fragment:exp=2:20",
                 ]
             )
             if ffmpeg_dir:
@@ -1034,16 +1039,17 @@ class BatchDownloader:
                             )
 
                     def get_pref_index(name: str) -> int:
-                        # Use custom priority if specified, otherwise new default preference where vidplay is first
+                        # Use custom priority if specified, otherwise prioritize high-speed, stable servers first
                         prefs = (
                             self.server_priority
                             if self.server_priority
                             else [
-                                "vidplay",
+                                "mega",
+                                "hd",
                                 "vidstream",
                                 "vidcloud",
-                                "hd",
                                 "megacloud",
+                                "vidplay",
                                 "rapidcloud",
                             ]
                         )
@@ -1333,7 +1339,7 @@ class BatchDownloader:
                                                     f"HTTP {sub_res.status_code}"
                                                     if sub_res
                                                     else str(e)
-                                                )
+                                                ) from e
 
                                         sub_text = sub_res.text
                                         if ".vtt" in sub_url.lower():

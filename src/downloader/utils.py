@@ -22,6 +22,7 @@ import re
 import shutil
 import sqlite3
 import tempfile
+import threading
 import time
 from urllib.parse import urlparse
 
@@ -265,16 +266,46 @@ class HttpClient:
         delay_range=(2.0, 5.0),
         proxy: str | None = None,
     ):
-        self.session = requests.Session(impersonate=impersonate)
+        self.impersonate = impersonate
         self.delay_range = delay_range
+        self.proxy = proxy
+        self.cookies_file_path: str | None = None
+        self.cookies_dict: dict[str, str] = {}
         self.last_request_time = 0.0
+        self._local = threading.local()
         if proxy:
             self.set_proxy(proxy)
+
+    @property
+    def session(self) -> requests.Session:
+        """Thread-local curl_cffi session to prevent multi-threading socket corruption."""
+        if not hasattr(self._local, "session") or self._local.session is None:
+            sess = requests.Session(impersonate=self.impersonate)
+            if self.proxy:
+                sess.proxies = {"http": self.proxy, "https": self.proxy}
+            for k, v in self.cookies_dict.items():
+                sess.cookies.set(k, v)
+            if self.cookies_file_path and os.path.exists(self.cookies_file_path):
+                try:
+                    import http.cookiejar
+
+                    cookie_jar = http.cookiejar.MozillaCookieJar(self.cookies_file_path)
+                    cookie_jar.load(ignore_discard=True, ignore_expires=True)
+                    for cookie in cookie_jar:
+                        sess.cookies.set(
+                            cookie.name, cookie.value, domain=cookie.domain, path=cookie.path
+                        )
+                except Exception:
+                    pass
+            self._local.session = sess
+        return self._local.session
 
     def set_proxy(self, proxy: str):
         """Configure HTTP/HTTPS proxy for curl_cffi session."""
         if proxy:
-            self.session.proxies = {"http": proxy, "https": proxy}
+            self.proxy = proxy
+            if hasattr(self._local, "session") and self._local.session:
+                self._local.session.proxies = {"http": proxy, "https": proxy}
             console.print(f"[success]Configured proxy for HTTP client: {proxy}[/success]")
 
     def load_cookies_from_file(self, cookies_file_path: str):
@@ -282,14 +313,10 @@ class HttpClient:
         if not cookies_file_path or not os.path.exists(cookies_file_path):
             return
         try:
-            import http.cookiejar
-
-            cookie_jar = http.cookiejar.MozillaCookieJar(cookies_file_path)
-            cookie_jar.load(ignore_discard=True, ignore_expires=True)
-            for cookie in cookie_jar:
-                self.session.cookies.set(
-                    cookie.name, cookie.value, domain=cookie.domain, path=cookie.path
-                )
+            self.cookies_file_path = cookies_file_path
+            # Reset current thread session to reload cookies
+            self._local.session = None
+            _ = self.session  # Trigger reload
             console.print(
                 f"[success]Loaded cookies from {cookies_file_path} into HTTP client.[/success]"
             )
@@ -362,12 +389,13 @@ class HttpClient:
                 # Rate limited or server error -> backoff
                 if response.status_code in (429, 403, 500, 502, 503, 504):
                     last_error = f"HTTP {response.status_code}"
+                    sleep_with_jitter = current_delay + random.uniform(0.5, 1.5)
                     console.print(
                         f"[warning]HTTP {response.status_code} received. "
-                        f"Retrying in {current_delay:.1f}s...[/warning]",
+                        f"Retrying in {sleep_with_jitter:.1f}s...[/warning]",
                         style="yellow",
                     )
-                    time.sleep(current_delay)
+                    time.sleep(sleep_with_jitter)
                     current_delay *= 2
                     attempt += 1
                 else:
@@ -375,12 +403,15 @@ class HttpClient:
                     return response
             except Exception as e:
                 last_error = e
+                # Reset corrupted thread-local session on network reset
+                self._local.session = None
+                sleep_with_jitter = current_delay + random.uniform(0.5, 1.5)
                 console.print(
                     f"[warning]Request exception: {e}. "
-                    f"Retrying in {current_delay:.1f}s...[/warning]",
+                    f"Retrying in {sleep_with_jitter:.1f}s...[/warning]",
                     style="yellow",
                 )
-                time.sleep(current_delay)
+                time.sleep(sleep_with_jitter)
                 current_delay *= 2
                 attempt += 1
 
@@ -436,24 +467,28 @@ class HttpClient:
                 # Rate limited or server error -> backoff
                 if response.status_code in (429, 403, 500, 502, 503, 504):
                     last_error = f"HTTP {response.status_code}"
+                    sleep_with_jitter = current_delay + random.uniform(0.5, 1.5)
                     console.print(
                         f"[warning]HTTP {response.status_code} received on POST. "
-                        f"Retrying in {current_delay:.1f}s...[/warning]",
+                        f"Retrying in {sleep_with_jitter:.1f}s...[/warning]",
                         style="yellow",
                     )
-                    time.sleep(current_delay)
+                    time.sleep(sleep_with_jitter)
                     current_delay *= 2
                     attempt += 1
                 else:
                     return response
             except Exception as e:
                 last_error = e
+                # Reset corrupted thread-local session on network reset
+                self._local.session = None
+                sleep_with_jitter = current_delay + random.uniform(0.5, 1.5)
                 console.print(
                     f"[warning]POST request exception: {e}. "
-                    f"Retrying in {current_delay:.1f}s...[/warning]",
+                    f"Retrying in {sleep_with_jitter:.1f}s...[/warning]",
                     style="yellow",
                 )
-                time.sleep(current_delay)
+                time.sleep(sleep_with_jitter)
                 current_delay *= 2
                 attempt += 1
 
