@@ -232,6 +232,8 @@ class BatchDownloader:
         only_server: str | None = None,
         proxy: str | None = None,
         use_browser_sniffer: bool = False,
+        progress_callback=None,
+        log_callback=None,
     ):
         self.output_dir = output_dir
         self.delay_range = delay_range
@@ -241,6 +243,8 @@ class BatchDownloader:
         self.only_server = only_server
         self.proxy = proxy
         self.use_browser_sniffer = use_browser_sniffer
+        self.progress_callback = progress_callback
+        self.log_callback = log_callback
 
         # Load Chrome cookies for WAF/CDN bypass and determine browser type for impersonation
         cookies_info = get_chrome_cookies_temp_file()
@@ -259,6 +263,15 @@ class BatchDownloader:
         )
         if self.cookies_path:
             self.http.load_cookies_from_file(self.cookies_path)
+
+    def emit_log(self, level: str, category: str, message: str) -> None:
+        """Helper to emit logs to both console and GUI log_callback."""
+        if self.log_callback:
+            try:
+                self.log_callback(level, category, message)
+            except Exception:
+                pass
+        console.print(f"[{category.upper()}] {message}")
 
     def cleanup(self):
         """Clean up temporary cookies files."""
@@ -302,11 +315,26 @@ class BatchDownloader:
                 console=console,
             ) as progress:
                 task = progress.add_task("Downloading...", total=total_size)
+                start_dl_time = time.time()
+                downloaded_so_far = 0
 
                 with open(dest_path, "wb") as f:
                     for chunk in response.iter_content(chunk_size=8192):
                         if chunk:
                             f.write(chunk)
+                            downloaded_so_far += len(chunk)
+                            elapsed = time.time() - start_dl_time
+                            spd = downloaded_so_far / elapsed if elapsed > 0 else 0.0
+                            eta_sec = (
+                                int((total_size - downloaded_so_far) / spd)
+                                if total_size > 0 and spd > 0
+                                else 0
+                            )
+                            if self.progress_callback:
+                                try:
+                                    self.progress_callback(1, 1, downloaded_so_far, spd, eta_sec)
+                                except Exception:
+                                    pass
                             progress.update(task, advance=len(chunk))
             return True
         except Exception as e:
@@ -460,6 +488,9 @@ class BatchDownloader:
                                 console=console,
                             ) as progress:
                                 task = progress.add_task("Downloading HLS...", total=len(seg_urls))
+                                start_time = time.time()
+                                downloaded_bytes_total = 0
+                                completed_count = 0
 
                                 for future in as_completed(futures):
                                     idx, ok, info = future.result()
@@ -477,6 +508,36 @@ class BatchDownloader:
                                         for f in futures:
                                             f.cancel()
                                         break
+
+                                    completed_count += 1
+                                    if isinstance(info, str) and os.path.exists(info):
+                                        downloaded_bytes_total += os.path.getsize(info)
+
+                                    elapsed = time.time() - start_time
+                                    speed = downloaded_bytes_total / elapsed if elapsed > 0 else 0.0
+                                    rem_segs = len(seg_urls) - completed_count
+                                    eta = (
+                                        int(
+                                            rem_segs
+                                            * (downloaded_bytes_total / completed_count)
+                                            / speed
+                                        )
+                                        if completed_count > 0 and speed > 0
+                                        else 0
+                                    )
+
+                                    if self.progress_callback:
+                                        try:
+                                            self.progress_callback(
+                                                completed_count,
+                                                len(seg_urls),
+                                                downloaded_bytes_total,
+                                                speed,
+                                                eta,
+                                            )
+                                        except Exception:
+                                            pass
+
                                     progress.update(task, advance=1)
 
                         if dns_failed_event.is_set():
@@ -936,6 +997,11 @@ class BatchDownloader:
                 )
 
             ep_label = f"S{season:02d}E{formatted_ep}"
+            self.emit_log(
+                "info",
+                "m3u8_stream",
+                f"Đang xử lý {series_title} - {ep_label} ({idx + 1}/{len(selected_episodes)})",
+            )
             console.print(
                 f"\n[bold magenta]=== Processing {series_title} - {ep_label} "
                 f"({idx + 1}/{len(selected_episodes)}) ===[/bold magenta]"

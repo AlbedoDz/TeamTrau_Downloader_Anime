@@ -25,9 +25,11 @@ logs/
 ffmpeg/*.exe
 yt-dlp/*.exe
 downloads/
+app_data/
 *.zip
 *.egg-info/
 .codegraph/
 .context-builder/
+
 
 

@@ -62,12 +62,21 @@ class AnikotoExtractor(BaseExtractor):
                         year = int(m_yr.group(1))
                         break
 
-            # Extract anime ID (mangaId) from page source
-            m_id = re.search(r"mangaId\s*=\s*(\d+)", res.text)
-            if not m_id:
+            # Extract anime ID (mangaId or data-id) from page source
+            m_id = re.search(r'(?:mangaId|animeId|manga_id)\s*=\s*["\']?(\d+)', res.text)
+            anime_id = None
+            if m_id:
+                anime_id = m_id.group(1)
+            else:
+                for el in soup.select("[data-id], [data-anime-id]"):
+                    val = el.get("data-id") or el.get("data-anime-id")
+                    if val and str(val).isdigit():
+                        anime_id = str(val)
+                        break
+
+            if not anime_id:
                 console.print("[error]Could not find anime ID in page source.[/error]", style="red")
                 return {"title": title, "episodes": [], "description": description, "year": year}
-            anime_id = m_id.group(1)
 
             # Generate VRF token using RC4 simple-hash algorithm
             def rc4(key: str, data: bytes) -> bytes:
