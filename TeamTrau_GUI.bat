@@ -3,6 +3,11 @@ setlocal enabledelayedexpansion
 title TeamTrau Anime Downloader GUI Launcher
 cls
 
+:: Ensure UTF-8 Console and Python Encoding
+chcp 65001 >nul
+set "PYTHONIOENCODING=utf-8"
+set "PYTHONUTF8=1"
+
 cd /d "%~dp0"
 
 echo ============================================================
@@ -35,26 +40,28 @@ if "%PY_EXE%"=="" (
     pause
     exit /b 1
 )
+:: Priority 1: Check if compiled Native EXE exists
+if exist "dist\TeamTrauDownloader\TeamTrauDownloader.exe" (
+    echo [OK] Phat hien ban Native EXE tai dist\TeamTrauDownloader\TeamTrauDownloader.exe
+    echo [INFO] Dang khoi chay TeamTrau Downloader Native Windows 11...
+    start "" "dist\TeamTrauDownloader\TeamTrauDownloader.exe"
+    exit /b 0
+)
 
+if exist "dist\TeamTrauDownloader.exe" (
+    echo [OK] Phat hien ban Single-File EXE tai dist\TeamTrauDownloader.exe
+    echo [INFO] Dang khoi chay TeamTrau Downloader Native Windows 11...
+    start "" "dist\TeamTrauDownloader.exe"
+    exit /b 0
+)
+
+:: Priority 2: Launch Native App Window via pywebview / app_window.py
 echo [OK] Su dung Python: %PY_EXE%
-echo [INFO] Dang khoi dong Web GUI Server tai http://127.0.0.1:8765/ ...
+echo [INFO] Dang khoi dong TeamTrau Native Desktop Window...
 echo.
 
-:: Launch UI Server in background window
-start "TeamTrau Web Server Engine" /min "%PY_EXE%" src\ui\server.py 127.0.0.1 8765
-
-:: Wait 1.5 seconds for server initialization
-timeout /t 2 /nobreak >nul
-
-:: Attempt to open in Microsoft Edge App Mode (Frameless Desktop UI)
-where msedge >nul 2>nul
-if %ERRORLEVEL% equ 0 (
-    echo [OK] Khoi chay ung dung Desktop App qua Microsoft Edge...
-    start msedge.exe --app="http://127.0.0.1:8765/" --window-size=1160,820
-) else (
-    echo [OK] Mo giao dien tren trinh duyet mac dinh...
-    start http://127.0.0.1:8765/
-)
+"%PY_EXE%" src\ui\app_window.py
+exit /b %ERRORLEVEL%
 
 echo.
 echo ============================================================

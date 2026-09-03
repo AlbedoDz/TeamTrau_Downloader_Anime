@@ -1,56 +1,88 @@
 :root {
-  /* Color Palette - Dark Slate & Glass */
+  /* Color Palette Compatibility */
   --bg-base: #0B0F17;
-  --bg-surface: #161F30;
-  --bg-surface-glass: rgba(22, 31, 48, 0.75);
-  --bg-surface-hover: rgba(30, 41, 59, 0.85);
-  --bg-surface-active: rgba(39, 54, 78, 0.95);
-  --bg-card: #131C2D;
-  --bg-card-glass: rgba(19, 28, 45, 0.65);
-  --bg-modal-backdrop: rgba(5, 8, 14, 0.82);
+
+  /* Windows 11 Fluent Mica Dark Palette (DLSS Swapper Theme) */
+  --bg-app: #0A0D14;
+  --bg-sidebar: #0D111A;
+  --bg-surface: #121722;
+  --bg-surface-glass: rgba(18, 23, 34, 0.85);
+  --bg-surface-hover: rgba(26, 33, 48, 0.85);
+  --bg-surface-active: rgba(34, 44, 64, 0.95);
+  --bg-card: #131824;
+  --bg-card-glass: rgba(19, 24, 36, 0.75);
+  --bg-modal-backdrop: rgba(5, 7, 12, 0.88);
 
   /* Text Hierarchy */
-  --text-primary: #F8FAFC;
+  --text-primary: #FFFFFF;
   --text-secondary: #94A3B8;
   --text-muted: #64748B;
-  --text-inverse: #0B0F17;
+  --text-inverse: #0A0D14;
 
-  /* Accent Colors */
+  /* DLSS Swapper Accent Colors (Neon Emerald Green) */
+  --accent-green: #22C55E;
+  --accent-green-light: #4ADE80;
+  --accent-green-glow: 0 0 12px rgba(34, 197, 94, 0.55);
   --accent-emerald: #10B981;
   --accent-emerald-glow: rgba(16, 185, 129, 0.35);
   --accent-cyan: #06B6D4;
-  --accent-cyan-glow: rgba(6, 182, 212, 0.35);
-  --accent-gradient: linear-gradient(135deg, #10B981 0%, #06B6D4 100%);
-  --accent-gradient-pulse: linear-gradient(90deg, #10B981 0%, #06B6D4 50%, #10B981 100%);
+  --accent-gradient: linear-gradient(135deg, #22C55E 0%, #10B981 100%);
+  --accent-gradient-pulse: linear-gradient(90deg, #22C55E 0%, #10B981 50%, #22C55E 100%);
 
   /* Status Colors */
   --status-idle: #64748B;
-  --status-downloading: #06B6D4;
+  --status-downloading: #22C55E;
   --status-completed: #10B981;
   --status-paused: #F59E0B;
   --status-error: #EF4444;
 
   /* Border & Outline */
   --border-glass: rgba(255, 255, 255, 0.08);
-  --border-glass-active: rgba(6, 182, 212, 0.4);
-  --border-subtle: rgba(148, 163, 184, 0.12);
+  --border-pill-active: rgba(255, 255, 255, 0.25);
+  --border-glass-active: rgba(34, 197, 94, 0.5);
+  --border-subtle: rgba(255, 255, 255, 0.06);
 
   /* Shadows & Glass Blurs */
-  --blur-glass: 16px;
-  --blur-heavy: 24px;
-  --shadow-glass: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
-  --shadow-glow-emerald: 0 0 20px rgba(16, 185, 129, 0.3);
-  --shadow-glow-cyan: 0 0 20px rgba(6, 182, 212, 0.3);
-  --shadow-inner-glass: inset 0 1px 1px 0 rgba(255, 255, 255, 0.1);
+  --blur-glass: 20px;
+  --blur-heavy: 28px;
+  --shadow-glass: 0 8px 32px 0 rgba(0, 0, 0, 0.45);
+  --shadow-glow-emerald: 0 0 20px rgba(34, 197, 94, 0.35);
+  --shadow-inner-glass: inset 0 1px 1px 0 rgba(255, 255, 255, 0.08);
 
   /* Typography */
-  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  --font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', Consolas, monospace;
+  --font-sans: 'Plus Jakarta Sans', 'Segoe UI Variable Display', 'Segoe UI', -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Cascadia Code', Consolas, monospace;
 
   /* Transitions */
   --transition-fast: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
   --transition-normal: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
   --transition-smooth: all 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Frameless Window Drag Regions */
+.titlebar-drag-region {
+  -webkit-app-region: drag;
+}
+
+.no-drag {
+  -webkit-app-region: no-drag !important;
+  pointer-events: auto !important;
+}
+
+/* DLSS Swapper Active Pill Indicator */
+.nav-pill-active {
+  border: 1px solid var(--border-pill-active);
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 9999px;
+  color: #FFFFFF;
+}
+
+.nav-dot-active {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background-color: var(--accent-green);
+  box-shadow: var(--accent-green-glow);
 }
 
 /* Glassmorphism Utilities */

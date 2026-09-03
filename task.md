@@ -56,9 +56,36 @@
     - [x] Giao Diện IDM Master Table View: `src/ui/components/DownloadTableView.tsx`, `src/ui/components/SidebarCategories.tsx`, `src/ui/components/ManagerToolbar.tsx`
     - [x] Context Menu Chuột Phải & Task Inspector Per-Task Log Modal: `src/ui/components/TaskDetailModal.tsx`, `src/ui/index.html`
     - [x] Mở Rộng REST API Server: `src/ui/server.py` (`/api/tasks`, `/api/tasks/<id>/*`, `/api/queue/*`, `/api/logs`)
-    - [x] Kiểm Thử E2E Toàn Diện AnimeSuge & AnimeCube trong GUI Download Manager:
-      - [x] Parsing & Metadata extraction: `animesuge.cz`, `animecube.live`
-      - [x] Queue Task Creation, Priority Scheduling, Progress Callback, Per-Task Logs
-      - [x] Pass 16/16 tests trong `tests/test_ui_e2e_workflow.py`
+    - [x] Tích Hợp Bộ Chọn Ngôn Ngữ Phụ Đề (Standalone / Multi-Sub Selector):
+      - [x] Giao diện Add Task Modal cho phép chọn 1 ngôn ngữ riêng lẻ hoặc tích chọn nhiều ngôn ngữ kết hợp
+      - [x] Bộ phím tắt Preset nhanh: `[Chỉ Tiếng Anh]`, `[Chỉ Tiếng TBN]`, `[Chỉ Tiếng Việt]`, `[Eng + Spanish]`, `[Eng + Spanish + Vi + Ja]`
+      - [x] Backend QueueManager tự động duyệt tải tất cả file `.srt` / `.vtt` tương ứng theo từng ngôn ngữ đã chọn
   - [x] Viết Unit Test Suite: `tests/test_ui_contracts.py` (PASS 4/4)
   - [x] Linter & Formatter (`ruff check`, `ruff format`): PASS 100%
+- [x] Nâng cấp Giao diện Windows 11 Fluent Mica Dark (DLSS Swapper Style) & Đóng gói Native .EXE:
+  - [x] Thiết lập Design Tokens & Styling (`src/ui/tokens/tokens.css`, Mica dark, emerald neon glow, pill indicator)
+  - [x] Tái cấu trúc `src/ui/index.html` sang layout 6 tab: Trang chủ, Tác vụ tải, Tiện ích, Lịch sử, Cài đặt, Giới thiệu (chuẩn DLSS Swapper)
+  - [x] Bổ sung Custom Titlebar với vùng drag và nút native window controls (Minimize, Maximize, Close)
+  - [x] Xây dựng Native Window Wrapper `src/ui/app_window.py` (PyWebView / Edge App Mode fallback, IPC window controls)
+  - [x] Xây dựng Pipeline đóng gói `.EXE` độc lập: `scripts/build_exe.py` và `build_exe.bat`
+  - [x] Đóng gói thành công `dist/TeamTrauDownloader/TeamTrauDownloader.exe`
+  - [x] Kiểm thử tự động (Ruff, Pytest contracts, Native API) PASS 100% (17/17 tests)
+- [x] Khắc phục triệt để lỗi đơ và giật lag giao diện (UI/UX Freezing & "Not Responding" Fix):
+  - [x] Loại bỏ 100% CDN mạng (Babel standalone 2.5MB, Tailwind Play CDN PostCSS compiler runtime)
+  - [x] Biên dịch trước JSX sang JavaScript thuần ES6 (`src/ui/assets/app.js`) sử dụng React classic runtime
+  - [x] Biên dịch trước stylesheet Tailwind CSS tĩnh (`src/ui/assets/app.css` - 23.5 KB)
+  - [x] Tải cục bộ runtime React 18 production (`react.production.min.js`, `react-dom.production.min.js`)
+  - [x] Chuyển đổi QueueDispatcher (`src/core/queue_manager.py`) sang cơ chế event-driven với `threading.Event` (loại bỏ busy polling SQLite định kỳ 1s)
+  - [x] Cập nhật script đóng gói `scripts/build_exe.py` đóng gói toàn bộ static assets
+  - [x] Đóng gói và kiểm thử lại file thực thi độc lập `dist\TeamTrauDownloader\TeamTrauDownloader.exe`
+  - [x] Kiểm thử tự động (Ruff, Pytest 52 tests, Native EXE smoke test) PASS 100%
+- [x] Sửa lỗi cài đặt đường dẫn & Tích hợp Trình phát Video Preview:
+  - [x] Khắc phục lỗi chọn thư mục ("✕ Lỗi chọn thư mục"): Chuẩn hóa đường dẫn tuyệt đối (`resolve()`) và bổ sung cơ chế fallback Tkinter STA native dialog + REST `/api/choose-folder`
+  - [x] Lưu cấu hình ứng dụng bền vững: Bổ sung endpoint `GET /api/config` và `POST /api/config`, lưu trữ `config.json`, tự động đồng bộ khi khởi động ứng dụng và áp dụng cho các tác vụ tải mới
+  - [x] Tính năng Phát Video Preview sau khi tải:
+    - [x] Backend HTTP Range Streaming (`GET /api/video?id=<task_id>`): Hỗ trợ tua và phát video MP4/MKV trực tiếp
+    - [x] Video Preview Modal trên giao diện: Trình phát video HTML5 xem trước tức thì, đóng nhanh bằng phím `Escape`
+    - [x] Nút "▶ Phát video xem trước" tích hợp trên cả bảng Tác vụ tải, Lịch sử tải, Task Inspector và Menu chuột phải
+    - [x] Hỗ trợ mở bằng trình phát mặc định hệ thống (`os.startfile` trên Windows) và mở thư mục chứa file
+  - [x] Kiểm thử tự động (Pytest 55/55 tests PASS) và tái đóng gói `dist/TeamTrauDownloader/TeamTrauDownloader.exe` thành công!
+

@@ -2,9 +2,26 @@ import json
 import os
 import subprocess
 import sys
+import threading
+import time
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
+
+# Force UTF-8 across entire process and streams on Windows
+os.environ["PYTHONIOENCODING"] = "utf-8"
+os.environ["PYTHONUTF8"] = "1"
+
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+if hasattr(sys.stderr, "reconfigure"):
+    try:
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 
 # Ensure project root is in sys.path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -18,7 +35,70 @@ from downloader.extractor import get_extractor_for_url  # noqa: E402
 from downloader.utils import HttpClient  # noqa: E402
 
 PORT = 8765
-STATIC_DIR = Path(__file__).resolve().parent
+
+# Robust static directory resolution (supports normal Python, PyInstaller onedir and onefile)
+if getattr(sys, "frozen", False):
+    candidate_bases = [
+        getattr(sys, "_MEIPASS", None),
+        Path(sys.executable).parent / "_internal",
+        Path(sys.executable).parent,
+    ]
+    STATIC_DIR = Path(__file__).resolve().parent
+    for base in candidate_bases:
+        if base:
+            b_path = Path(base)
+            if (b_path / "ui" / "index.html").exists():
+                STATIC_DIR = b_path / "ui"
+                break
+            elif (b_path / "index.html").exists():
+                STATIC_DIR = b_path
+                break
+else:
+    STATIC_DIR = Path(__file__).resolve().parent
+
+
+# Fast In-Memory Task Cache with 0.4s TTL to eliminate SQLite lock contention on rapid polling
+_TASKS_CACHE = {
+    "timestamp": 0.0,
+    "all_tasks": [],
+    "counts": {},
+}
+_CACHE_LOCK = threading.Lock()
+
+
+def invalidate_tasks_cache() -> None:
+    """Invalidate cached tasks so next poll immediately reflects mutations."""
+    with _CACHE_LOCK:
+        _TASKS_CACHE["timestamp"] = 0.0
+
+
+CONFIG_PATH = PROJECT_ROOT / "config.json"
+
+
+def load_app_settings() -> dict:
+    default_settings = {
+        "outputDir": str((PROJECT_ROOT / "downloads").resolve()),
+        "maxWorkers": 3,
+        "proxyUrl": "",
+        "delaySec": 1.0,
+        "namingFormat": "simple",
+    }
+    if CONFIG_PATH.exists():
+        try:
+            with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                default_settings.update(data)
+        except Exception:
+            pass
+    return default_settings
+
+
+def save_app_settings(settings_dict: dict) -> None:
+    try:
+        with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+            json.dump(settings_dict, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        manager_logger.log("error", "general", f"Lỗi lưu file config.json: {e}")
 
 
 class TeamTrauAPIHandler(SimpleHTTPRequestHandler):
@@ -51,6 +131,59 @@ class TeamTrauAPIHandler(SimpleHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.end_headers()
 
+    def stream_video_file(self, file_path: Path):
+        """Stream local MP4/MKV video with HTTP Range header support for seeking."""
+        file_size = file_path.stat().st_size
+        range_header = self.headers.get("Range")
+
+        content_type = "video/mp4"
+        if file_path.suffix.lower() == ".mkv":
+            content_type = "video/x-matroska"
+        elif file_path.suffix.lower() == ".webm":
+            content_type = "video/webm"
+
+        if range_header:
+            try:
+                range_match = re.match(r"bytes=(\d+)-(\d*)", range_header)
+                if range_match:
+                    start_byte = int(range_match.group(1))
+                    end_byte = int(range_match.group(2)) if range_match.group(2) else file_size - 1
+                    length = end_byte - start_byte + 1
+
+                    self.send_response(206)
+                    self.send_header("Content-Type", content_type)
+                    self.send_header("Content-Range", f"bytes {start_byte}-{end_byte}/{file_size}")
+                    self.send_header("Content-Length", str(length))
+                    self.send_header("Accept-Ranges", "bytes")
+                    self.send_header("Cache-Control", "no-cache")
+                    self.end_headers()
+
+                    with open(file_path, "rb") as f:
+                        f.seek(start_byte)
+                        remaining = length
+                        while remaining > 0:
+                            chunk_size = min(remaining, 64 * 1024)
+                            chunk = f.read(chunk_size)
+                            if not chunk:
+                                break
+                            self.wfile.write(chunk)
+                            remaining -= len(chunk)
+                    return
+            except Exception:
+                pass
+
+        # Full file response
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(file_size))
+        self.send_header("Accept-Ranges", "bytes")
+        self.send_header("Cache-Control", "no-cache")
+        self.end_headers()
+
+        with open(file_path, "rb") as f:
+            while chunk := f.read(64 * 1024):
+                self.wfile.write(chunk)
+
     def do_GET(self):
         parsed_url = urlparse(self.path)
         path = parsed_url.path
@@ -58,32 +191,48 @@ class TeamTrauAPIHandler(SimpleHTTPRequestHandler):
 
         # GET /api/tasks (Download Manager Master Table View)
         if path == "/api/tasks":
-            db = DatabaseManager()
             status_filter = query_params.get("status", ["all"])[0]
             category_filter = query_params.get("category", ["all"])[0]
             search_query = query_params.get("q", [None])[0]
 
-            tasks = db.get_all_tasks(
-                status_filter=status_filter,
-                category_filter=category_filter,
-                search_query=search_query,
-            )
+            now = time.time()
+            with _CACHE_LOCK:
+                if now - _TASKS_CACHE["timestamp"] < 0.4 and _TASKS_CACHE["all_tasks"]:
+                    all_tasks = _TASKS_CACHE["all_tasks"]
+                    counts = _TASKS_CACHE["counts"]
+                else:
+                    db = DatabaseManager()
+                    all_tasks = db.get_all_tasks(status_filter="all")
+                    counts = {
+                        "all": len(all_tasks),
+                        "downloading": sum(1 for t in all_tasks if t.status == TaskStatus.DOWNLOADING),
+                        "queued": sum(1 for t in all_tasks if t.status == TaskStatus.QUEUED),
+                        "completed": sum(1 for t in all_tasks if t.status == TaskStatus.COMPLETED),
+                        "paused": sum(1 for t in all_tasks if t.status == TaskStatus.PAUSED),
+                        "failed": sum(1 for t in all_tasks if t.status == TaskStatus.FAILED),
+                        "anime": sum(1 for t in all_tasks if t.download_mode.value == "full"),
+                        "video": sum(1 for t in all_tasks if t.download_mode.value == "video_only"),
+                        "subtitle": sum(1 for t in all_tasks if t.download_mode.value == "sub_only"),
+                    }
+                    _TASKS_CACHE["timestamp"] = now
+                    _TASKS_CACHE["all_tasks"] = all_tasks
+                    _TASKS_CACHE["counts"] = counts
 
-            # Compute category counts
-            all_tasks = db.get_all_tasks(status_filter="all")
-            counts = {
-                "all": len(all_tasks),
-                "downloading": sum(1 for t in all_tasks if t.status == TaskStatus.DOWNLOADING),
-                "queued": sum(1 for t in all_tasks if t.status == TaskStatus.QUEUED),
-                "completed": sum(1 for t in all_tasks if t.status == TaskStatus.COMPLETED),
-                "paused": sum(1 for t in all_tasks if t.status == TaskStatus.PAUSED),
-                "failed": sum(1 for t in all_tasks if t.status == TaskStatus.FAILED),
-            }
+            # In-memory fast filter
+            filtered_tasks = all_tasks
+            if status_filter != "all":
+                filtered_tasks = [t for t in filtered_tasks if t.status.value == status_filter]
+            if category_filter != "all":
+                filtered_tasks = [t for t in filtered_tasks if t.download_mode.value == category_filter]
+            if search_query:
+                sq = search_query.lower()
+                filtered_tasks = [t for t in filtered_tasks if sq in t.anime_title.lower() or sq in t.site.lower()]
 
             self.send_json(
                 {
                     "success": True,
-                    "tasks": [t.to_dict() for t in tasks],
+                    "tasks": [t.to_dict() for t in filtered_tasks],
+                    "all_tasks": [t.to_dict() for t in all_tasks],
                     "counts": counts,
                     "config": queue_manager.config.to_dict(),
                 }
@@ -119,6 +268,29 @@ class TeamTrauAPIHandler(SimpleHTTPRequestHandler):
                     "isDownloading": is_downloading,
                 }
             )
+        # GET /api/config
+        if path == "/api/config":
+            self.send_json({"success": True, "config": load_app_settings()})
+            return
+
+        # GET /api/video?id=<task_id> or /api/video?path=<encoded_path>
+        if path == "/api/video":
+            task_id = query_params.get("id", [None])[0]
+            raw_path = query_params.get("path", [None])[0]
+
+            file_path = None
+            if task_id:
+                task = DatabaseManager().get_task(task_id)
+                if task and task.save_path:
+                    file_path = Path(task.save_path).resolve()
+            elif raw_path:
+                file_path = Path(raw_path).resolve()
+
+            if not file_path or not file_path.exists() or not file_path.is_file():
+                self.send_json({"error": "Video file not found or not ready."}, status_code=404)
+                return
+
+            self.stream_video_file(file_path)
             return
 
         # Static file serving
@@ -146,19 +318,67 @@ class TeamTrauAPIHandler(SimpleHTTPRequestHandler):
             self.handle_legacy_download(payload)
         elif path == "/api/queue/pause-all":
             queue_manager.pause_all()
+            invalidate_tasks_cache()
             self.send_json({"success": True, "message": "Tất cả tác vụ đã tạm dừng."})
         elif path == "/api/queue/resume-all":
             queue_manager.resume_all()
+            invalidate_tasks_cache()
             self.send_json({"success": True, "message": "Tất cả tác vụ đã tiếp tục."})
         elif path == "/api/queue/clear-completed":
             queue_manager.clear_completed()
+            invalidate_tasks_cache()
             self.send_json({"success": True, "message": "Đã dọn dẹp các tác vụ hoàn thành."})
         elif path == "/api/queue/config":
             limit = int(payload.get("maxConcurrent", 3))
             queue_manager.set_concurrency_limit(limit)
+            invalidate_tasks_cache()
             self.send_json({"success": True, "config": queue_manager.config.to_dict()})
+        elif path == "/api/config":
+            output_dir = payload.get("outputDir")
+            max_workers = payload.get("maxWorkers")
+            proxy_url = payload.get("proxyUrl")
+            delay_sec = payload.get("delaySec")
+            naming_format = payload.get("namingFormat")
+
+            current_settings = load_app_settings()
+            if output_dir:
+                current_settings["outputDir"] = output_dir
+            if max_workers is not None:
+                current_settings["maxWorkers"] = int(max_workers)
+                queue_manager.set_concurrency_limit(int(max_workers))
+            if proxy_url is not None:
+                current_settings["proxyUrl"] = proxy_url
+            if delay_sec is not None:
+                current_settings["delaySec"] = float(delay_sec)
+            if naming_format:
+                current_settings["namingFormat"] = naming_format
+
+            save_app_settings(current_settings)
+            invalidate_tasks_cache()
+            self.send_json({"success": True, "config": current_settings})
+        elif path == "/api/choose-folder":
+            initial_dir = payload.get("defaultPath", "")
+            resolved = str(Path(initial_dir).resolve()) if initial_dir else str(Path.home() / "Downloads")
+            selected = ""
+            try:
+                import tkinter as tk
+                from tkinter import filedialog
+
+                root = tk.Tk()
+                root.withdraw()
+                root.attributes("-topmost", True)
+                selected = filedialog.askdirectory(initialdir=resolved, title="Chọn thư mục tải xuống")
+                root.destroy()
+            except Exception as e:
+                manager_logger.log("error", "general", f"Lỗi chọn thư mục: {e}")
+
+            if selected:
+                self.send_json({"success": True, "folder": selected})
+            else:
+                self.send_json({"success": False, "folder": "", "cancelled": True})
         elif path == "/api/cancel":
             queue_manager.pause_all()
+            invalidate_tasks_cache()
             self.send_json({"success": True, "message": "Đã tạm dừng tiến trình."})
         elif path == "/api/logs/clear":
             manager_logger.clear_system_logs()
@@ -216,6 +436,38 @@ class TeamTrauAPIHandler(SimpleHTTPRequestHandler):
                         "selected": True,
                     }
                     for i, ep in enumerate(episodes)
+                ],
+                "availableQualities": [
+                    {
+                        "id": "720p",
+                        "label": "720p (HD - Mặc Định Khuyên Dùng)",
+                        "resolution": "1280x720",
+                        "isRecommended": True,
+                    },
+                    {
+                        "id": "1080p",
+                        "label": "1080p (Full HD)",
+                        "resolution": "1920x1080",
+                        "isRecommended": False,
+                    },
+                    {
+                        "id": "480p",
+                        "label": "480p (SD - Tiêu Chuẩn)",
+                        "resolution": "854x480",
+                        "isRecommended": False,
+                    },
+                    {
+                        "id": "360p",
+                        "label": "360p (Low - Nhẹ Nhất)",
+                        "resolution": "640x360",
+                        "isRecommended": False,
+                    },
+                    {
+                        "id": "auto",
+                        "label": "Auto (Tự Động Chọn Cao Nhất)",
+                        "resolution": "Best",
+                        "isRecommended": False,
+                    },
                 ],
                 "availableServers": [
                     {
@@ -279,10 +531,10 @@ class TeamTrauAPIHandler(SimpleHTTPRequestHandler):
         title = payload.get("animeTitle", "Anime Series")
         episodes = payload.get("episodes", ["1"])
         site = payload.get("site", "allwish")
-        quality = payload.get("quality", "1080p")
+        quality = payload.get("quality", "720p")
         mode_str = payload.get("downloadMode", "full")
         target_subs = payload.get("targetSubLangs", ["es-LA", "en"])
-        output_dir = payload.get("outputDir", "./downloads")
+        output_dir = payload.get("outputDir") or load_app_settings()["outputDir"]
 
         mode = DownloadMode.FULL
         if mode_str == "sub_only":
@@ -305,6 +557,7 @@ class TeamTrauAPIHandler(SimpleHTTPRequestHandler):
             )
             created_tasks.append(task.to_dict())
 
+        invalidate_tasks_cache()
         self.send_json(
             {
                 "success": True,
@@ -326,32 +579,39 @@ class TeamTrauAPIHandler(SimpleHTTPRequestHandler):
 
         if action == "pause":
             queue_manager.pause_task(task_id)
+            invalidate_tasks_cache()
             self.send_json({"success": True, "message": f"Tác vụ {task_id} đã tạm dừng."})
         elif action == "resume":
             queue_manager.resume_task(task_id)
+            invalidate_tasks_cache()
             self.send_json({"success": True, "message": f"Tác vụ {task_id} đã tiếp tục."})
         elif action == "restart":
             queue_manager.restart_task(task_id)
+            invalidate_tasks_cache()
             self.send_json({"success": True, "message": f"Tác vụ {task_id} đã đặt lại để tải lại."})
         elif action == "delete":
             delete_file = payload.get("deleteFile", False)
             queue_manager.delete_task(task_id, delete_file=delete_file)
+            invalidate_tasks_cache()
             self.send_json({"success": True, "message": f"Đã xóa tác vụ {task_id}."})
         elif action == "open-file":
             task = DatabaseManager().get_task(task_id)
-            if task and task.save_path and Path(task.save_path).exists():
-                try:
-                    if sys.platform == "win32":
-                        os.startfile(task.save_path)
-                    else:
-                        subprocess.Popen(["xdg-open", task.save_path])
-                    self.send_json({"success": True, "message": "Đã mở file."})
-                except Exception as e:
-                    self.send_json({"success": False, "error": str(e)}, status_code=500)
-            else:
-                self.send_json(
-                    {"success": False, "error": "File chưa tồn tại trên ổ đĩa."}, status_code=404
-                )
+            if task and task.save_path:
+                res_path = Path(task.save_path).resolve()
+                if res_path.exists():
+                    try:
+                        if sys.platform == "win32":
+                            os.startfile(str(res_path))
+                        else:
+                            subprocess.Popen(["xdg-open", str(res_path)])
+                        self.send_json({"success": True, "message": "Đã mở file."})
+                        return
+                    except Exception as e:
+                        self.send_json({"success": False, "error": str(e)}, status_code=500)
+                        return
+            self.send_json(
+                {"success": False, "error": "File chưa tồn tại trên ổ đĩa."}, status_code=404
+            )
         elif action == "open-folder":
             task = DatabaseManager().get_task(task_id)
             if task and task.save_path:

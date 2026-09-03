@@ -1,0 +1,60 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg-app: #0A0D14;
+  --bg-sidebar: #0D111A;
+  --bg-card: #131824;
+  --bg-base: #0B0F17;
+  --accent-green: #22C55E;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  background-color: #0A0D14;
+  color: #E2E8F0;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.font-mono {
+  font-family: Consolas, Monaco, 'Courier New', Courier, monospace;
+}
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+::-webkit-scrollbar-track {
+  background: #0A0D14;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(34, 197, 94, 0.5);
+}
+.select-text {
+  user-select: text !important;
+  -webkit-user-select: text !important;
+}
+.titlebar-drag {
+  -webkit-app-region: drag;
+}
+.no-drag {
+  -webkit-app-region: no-drag !important;
+  pointer-events: auto !important;
+}
+.nav-pill-active {
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 9999px;
+  color: #FFFFFF;
+}
+.nav-dot-active {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background-color: #22C55E;
+  box-shadow: 0 0 10px #22C55E;
+}

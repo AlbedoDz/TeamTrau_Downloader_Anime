@@ -13,7 +13,7 @@ from downloader.utils import HttpClient, console
 class MultiThreadedHLSDownloader:
     """Fast concurrent HLS segment downloader with automatic remuxing."""
 
-    def __init__(self, http_client: HttpClient, max_workers: int = 4):
+    def __init__(self, http_client: HttpClient, max_workers: int = 8):
         self.http = http_client
         self.max_workers = max_workers
 
@@ -52,11 +52,12 @@ class MultiThreadedHLSDownloader:
                     frag_file = os.path.join(temp_dir, f"seg_{idx:05d}.ts")
                     for attempt in range(5):
                         try:
-                            import time
+                            if attempt > 0:
+                                import time
 
-                            time.sleep(0.1 + 0.5 * attempt)
+                                time.sleep(0.2 * attempt)
                             f_res = self.http.get(
-                                frag_url, referer=referer, retries=2, delay=2.0, rate_limit=False
+                                frag_url, referer=referer, retries=2, delay=0.5, rate_limit=False
                             )
                             if f_res.status_code == 200 and f_res.content:
                                 with open(frag_file, "wb") as f:
@@ -79,11 +80,12 @@ class MultiThreadedHLSDownloader:
                             )
 
                 # Concatenate all downloaded fragments in exact sequential order
-                with open(temp_ts_path, "wb") as outfile:
+                with open(temp_ts_path, "wb", buffering=1024 * 1024) as outfile:
                     for frag_file in frag_files:
                         if frag_file and os.path.exists(frag_file):
-                            with open(frag_file, "rb") as infile:
-                                outfile.write(infile.read())
+                            with open(frag_file, "rb", buffering=256 * 1024) as infile:
+                                while chunk := infile.read(256 * 1024):
+                                    outfile.write(chunk)
 
             if not os.path.exists(temp_ts_path) or os.path.getsize(temp_ts_path) == 0:
                 console.print("[error]Parallel HLS segment assembly empty[/error]")
@@ -104,7 +106,14 @@ class MultiThreadedHLSDownloader:
                 "+faststart",
                 dest_path,
             ]
-            remux_res = subprocess.run(remux_cmd, capture_output=True, text=True, check=False)
+            remux_res = subprocess.run(
+                remux_cmd,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=False,
+            )
 
             if os.path.exists(temp_ts_path):
                 os.remove(temp_ts_path)

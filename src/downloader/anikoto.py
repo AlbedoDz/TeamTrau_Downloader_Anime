@@ -32,17 +32,41 @@ class AnikotoExtractor(BaseExtractor):
 
     def get_anime_details(self, url: str) -> dict:
         """Return anime title + episode list by fetching statically and generating vrf tokens."""
-        console.print(f"[info]Fetching anime page (static fetch): {url}[/info]")
+        # Normalize and prepare fallback candidate URLs (e.g. strip /ep-1 if 404)
+        candidate_urls = [url]
+        no_ep_url = re.sub(r"/ep-[\w-]+/?$", "", url)
+        if no_ep_url != url and no_ep_url not in candidate_urls:
+            candidate_urls.append(no_ep_url)
+
+        if "/watch/" in url:
+            anime_variant = no_ep_url.replace("/watch/", "/anime/")
+            if anime_variant not in candidate_urls:
+                candidate_urls.append(anime_variant)
+        elif "/anime/" in url:
+            watch_variant = no_ep_url.replace("/anime/", "/watch/")
+            if watch_variant not in candidate_urls:
+                candidate_urls.append(watch_variant)
+
+        res = None
+        for cand_url in candidate_urls:
+            console.print(f"[info]Fetching anime page (static fetch): {cand_url}[/info]")
+            try:
+                r = self.http.get(cand_url)
+                if r.status_code == 200 and r.text:
+                    res = r
+                    url = cand_url
+                    break
+            except Exception as fe:
+                console.print(f"[dim]Failed candidate fetch {cand_url}: {fe}[/dim]")
+
+        if not res or res.status_code != 200:
+            console.print(
+                f"[error]Failed to fetch watch page (HTTP {res.status_code if res else '404'})[/error]",
+                style="red",
+            )
+            return {"title": "Unknown Anime", "episodes": [], "description": "", "year": None}
 
         try:
-            res = self.http.get(url)
-            if res.status_code != 200:
-                console.print(
-                    f"[error]Failed to fetch watch page (HTTP {res.status_code})[/error]",
-                    style="red",
-                )
-                return {"title": "Unknown Anime", "episodes": [], "description": "", "year": None}
-
             soup = BeautifulSoup(res.text, "html.parser")
             h1 = soup.find("h1", class_="title")
             title = h1.text.strip() if h1 else "Unknown Anime"
@@ -187,17 +211,23 @@ class AnikotoExtractor(BaseExtractor):
                             "type": t_type,
                         }
                     )
-        else:
-            for li in soup.select("li[data-link-id]"):
-                link_id = li.get("data-link-id")
-                name = li.get_text().strip()
-                servers.append(
-                    {
-                        "id": link_id,
-                        "name": name,
-                        "type": "sub",
-                    }
-                )
+
+        # Sort servers: sub first, then prefer HD-1 and Vidstream
+        def server_priority(s: dict) -> int:
+            name = s.get("name", "").lower()
+            t = s.get("type", "sub")
+            score = 0 if t == "sub" else 100
+            if "hd-1" in name:
+                score += 1
+            elif "vidstream" in name:
+                score += 2
+            elif "megacloud" in name:
+                score += 3
+            else:
+                score += 10
+            return score
+
+        servers.sort(key=server_priority)
         return servers
 
     def get_episode_data(

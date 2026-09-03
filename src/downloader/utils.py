@@ -1,14 +1,19 @@
+import io
+import os
 import sys
 
-# Prevent UnicodeEncodeError on legacy terminals by reconfiguring stdout/stderr
+# Ensure UTF-8 across entire process and streams on Windows
+os.environ["PYTHONIOENCODING"] = "utf-8"
+os.environ["PYTHONUTF8"] = "1"
+
 if hasattr(sys.stdout, "reconfigure"):
     try:
-        sys.stdout.reconfigure(errors="backslashreplace")
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     except Exception:
         pass
 if hasattr(sys.stderr, "reconfigure"):
     try:
-        sys.stderr.reconfigure(errors="backslashreplace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     except Exception:
         pass
 
@@ -16,7 +21,6 @@ import base64
 import ctypes
 import ctypes.wintypes
 import json
-import os
 import random
 import re
 import shutil
@@ -42,7 +46,39 @@ def get_safe_referer(url: str) -> str:
     return url
 
 
-console = Console(safe_box=True)
+class SafeConsole(Console):
+    """Unicode-safe Rich Console wrapper that never crashes on Windows charmap/cp1252."""
+
+    def print(self, *objects, **kwargs):
+        try:
+            super().print(*objects, **kwargs)
+        except (UnicodeEncodeError, OSError, ValueError):
+            self._buffer.clear()
+            try:
+                clean_objects = [
+                    str(obj).encode("ascii", errors="replace").decode("ascii")
+                    if isinstance(obj, str)
+                    else obj
+                    for obj in objects
+                ]
+                super().print(*clean_objects, **kwargs)
+            except Exception:
+                self._buffer.clear()
+
+
+_safe_file = sys.stdout
+if sys.stdout and hasattr(sys.stdout, "buffer"):
+    try:
+        _safe_file = io.TextIOWrapper(
+            sys.stdout.buffer,
+            encoding="utf-8",
+            errors="replace",
+            line_buffering=True,
+        )
+    except Exception:
+        _safe_file = sys.stdout
+
+console = SafeConsole(safe_box=True, file=_safe_file)
 
 
 def clean_filename(name: str) -> str:

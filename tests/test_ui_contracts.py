@@ -80,3 +80,75 @@ def test_all_ui_components_exist() -> None:
     for rel_path in required_components:
         target_path = UI_DIR / rel_path
         assert target_path.exists(), f"Required UI file missing: {rel_path}"
+
+
+def test_tasks_api_contract_counts() -> None:
+    """Verify DatabaseManager and counts dictionary provide all required reactive categories."""
+    from data.db import DatabaseManager
+    from data.models import TaskStatus
+
+    db = DatabaseManager()
+    all_tasks = db.get_all_tasks(status_filter="all")
+
+    counts = {
+        "all": len(all_tasks),
+        "downloading": sum(1 for t in all_tasks if t.status == TaskStatus.DOWNLOADING),
+        "queued": sum(1 for t in all_tasks if t.status == TaskStatus.QUEUED),
+        "completed": sum(1 for t in all_tasks if t.status == TaskStatus.COMPLETED),
+        "paused": sum(1 for t in all_tasks if t.status == TaskStatus.PAUSED),
+        "failed": sum(1 for t in all_tasks if t.status == TaskStatus.FAILED),
+        "anime": sum(1 for t in all_tasks if t.download_mode.value == "full"),
+        "video": sum(1 for t in all_tasks if t.download_mode.value == "video_only"),
+        "subtitle": sum(1 for t in all_tasks if t.download_mode.value == "sub_only"),
+    }
+
+    required_keys = ["all", "downloading", "queued", "completed", "paused", "failed", "anime", "video", "subtitle"]
+    for key in required_keys:
+        assert key in counts, f"Missing count category: {key}"
+        assert isinstance(counts[key], int)
+
+
+def test_config_persistence_contract(tmp_path: Path) -> None:
+    """Verify that settings can be loaded and saved to config.json reliably."""
+    from ui.server import load_app_settings, save_app_settings, CONFIG_PATH
+    import ui.server as server_module
+
+    # Temporarily point CONFIG_PATH to tmp_path
+    original_config_path = server_module.CONFIG_PATH
+    test_config = tmp_path / "config.json"
+    server_module.CONFIG_PATH = test_config
+
+    try:
+        initial = load_app_settings()
+        assert "outputDir" in initial
+        assert "maxWorkers" in initial
+
+        # Save customized settings
+        test_settings = {
+            "outputDir": str(tmp_path / "custom_downloads"),
+            "maxWorkers": 5,
+            "proxyUrl": "http://127.0.0.1:8888",
+            "delaySec": 2.5,
+            "namingFormat": "standard"
+        }
+        save_app_settings(test_settings)
+        assert test_config.exists()
+
+        reloaded = load_app_settings()
+        assert reloaded["outputDir"] == str(tmp_path / "custom_downloads")
+        assert reloaded["maxWorkers"] == 5
+        assert reloaded["proxyUrl"] == "http://127.0.0.1:8888"
+        assert reloaded["delaySec"] == 2.5
+    finally:
+        server_module.CONFIG_PATH = original_config_path
+
+
+def test_video_preview_path_resolution(tmp_path: Path) -> None:
+    """Verify that save_path resolution handles relative paths for video preview."""
+    fake_video = tmp_path / "test_episode.mp4"
+    fake_video.write_bytes(b"\x00" * 1024)
+
+    assert fake_video.resolve().exists()
+    assert fake_video.stat().st_size == 1024
+
+

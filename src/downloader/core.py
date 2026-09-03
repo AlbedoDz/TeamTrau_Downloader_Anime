@@ -271,7 +271,10 @@ class BatchDownloader:
                 self.log_callback(level, category, message)
             except Exception:
                 pass
-        console.print(f"[{category.upper()}] {message}")
+        try:
+            console.print(f"[{category.upper()}] {message}")
+        except Exception:
+            pass
 
     def cleanup(self):
         """Clean up temporary cookies files."""
@@ -568,7 +571,12 @@ class BatchDownloader:
                         ]
 
                         remux_res = subprocess.run(
-                            remux_cmd, capture_output=True, text=True, check=False
+                            remux_cmd,
+                            capture_output=True,
+                            text=True,
+                            encoding="utf-8",
+                            errors="replace",
+                            check=False,
                         )
 
                         if os.path.exists(temp_ts_path):
@@ -1142,164 +1150,75 @@ class BatchDownloader:
                         )
                     )
 
-                # Pre-resolve stream sources to verify correctness (consensus check)
-                resolved_servers_data = []
-                hash_counts = {}
-
-                console.print(
-                    "[info]Pre-resolving servers to verify anime and episode matching...[/info]"
-                )
-                for server in servers:
-                    server_name = server["name"] if server else "Default"
-                    try:
-                        ep_data = extractor.get_episode_data(ep, lang, server_info=server)
-                        video_url = ep_data.get("video_url")
-                        hashes = extract_hashes_from_url(video_url)
-                        if not hashes:
-                            subtitles = ep_data.get("subtitles", [])
-                            if subtitles:
-                                hashes = extract_hashes_from_url(subtitles[0].get("url"))
-
-                        resolved_servers_data.append(
-                            {
-                                "server": server,
-                                "ep_data": ep_data,
-                                "hashes": hashes,
-                            }
-                        )
-
-                        if hashes:
-                            hash_counts[hashes] = hash_counts.get(hashes, 0) + 1
-                    except Exception as e:
-                        console.print(f"[dim]Failed to resolve server {server_name}: {e}[/dim]")
-
-                if self.interactive and resolved_servers_data:
-                    from rich.prompt import IntPrompt
-                    from rich.table import Table
-
-                    # Identify potential hardsub hashes by scanning known hsub servers
-                    hardsub_hashes = set()
-                    for item in resolved_servers_data:
-                        s = item["server"]
-                        h = item["hashes"]
-                        if s and h:
-                            if (
-                                s.get("type") == "hsub"
-                                or "hsub" in s.get("name", "").lower()
-                                or "hardsub" in s.get("name", "").lower()
-                            ):
-                                hardsub_hashes.add(h)
-
-                    table = Table(
-                        title=f"\n[bold cyan]Available Servers for Ep {ep['num']}[/bold cyan]"
+                # Direct prioritized server resolution (Lazy On-Demand)
+                valid_servers_data = []
+                if self.interactive:
+                    console.print(
+                        "[info]Pre-resolving servers to verify anime and episode matching...[/info]"
                     )
-                    table.add_column("Index", justify="center", style="cyan", no_wrap=True)
-                    table.add_column("Server Name", style="magenta")
-                    table.add_column("Has Video?", justify="center", style="green")
-                    table.add_column("Has Soft Sub?", justify="center", style="yellow")
-                    table.add_column("Evaluation / Recommendation", style="blue")
-
-                    for idx_s, item in enumerate(resolved_servers_data):
-                        s = item["server"]
-                        ep_d = item["ep_data"]
-                        h = item["hashes"]
-
-                        server_name = s["name"] if s else "Default"
-                        has_video = "Yes" if ep_d.get("video_url") else "No"
-
-                        sub_tracks = ep_d.get("subtitles", [])
-                        has_sub = f"Yes ({sub_tracks[0]['label']})" if sub_tracks else "No"
-
-                        # Evaluate suitability
-                        if not ep_d.get("video_url"):
-                            suitability = "[red]Error: Cannot resolve stream[/red]"
-                        elif s and (s.get("type") == "hsub" or "hsub" in s.get("name", "").lower()):
-                            suitability = "[yellow]Hardsub (Embedded Subtitles)[/yellow]"
-                        elif h and h in hardsub_hashes:
-                            suitability = "[orange3]Warning: Suspected Hardsub (shares hash with HSUB version)[/orange3]"
-                        elif sub_tracks:
-                            suitability = (
-                                "[bold green]RECOMMENDED (Raw Video + Soft Sub)[/bold green]"
-                            )
-                        else:
-                            suitability = "[yellow]Video Only (No soft subtitles found)[/yellow]"
-
-                        table.add_row(str(idx_s + 1), server_name, has_video, has_sub, suitability)
-
-                    console.print(table)
-
-                    choice = IntPrompt.ask(
-                        "Select server to download",
-                        choices=[str(i + 1) for i in range(len(resolved_servers_data))],
-                        default=1,
-                    )
-                    selected_item = resolved_servers_data[choice - 1]
-                    valid_servers_data = [(selected_item["server"], selected_item["ep_data"])]
-                    selected_server_obj = selected_item["server"]
-                    if selected_server_obj and selected_server_obj.get("name"):
-                        self.only_server = selected_server_obj["name"]
-                        self.interactive = (
-                            False  # Auto-apply to remaining batch episodes without prompting again
-                        )
-                        console.print(
-                            f"[info]Saved server selection '{self.only_server}' for all subsequent episodes in this batch.[/info]"
-                        )
-                else:
-                    # Find consensus hash (majority vote)
-                    consensus_hash = None
-                    if hash_counts:
-                        sorted_hashes = sorted(
-                            hash_counts.items(), key=lambda x: x[1], reverse=True
-                        )
-                        if len(sorted_hashes) == 1 or sorted_hashes[0][1] > sorted_hashes[1][1]:
-                            consensus_hash = sorted_hashes[0][0]
-
-                    # Filter resolved servers by consensus
-                    valid_servers_data = []
-                    for item in resolved_servers_data:
-                        server = item["server"]
+                    resolved_servers_data = []
+                    for server in servers:
                         server_name = server["name"] if server else "Default"
-                        ep_data = item["ep_data"]
-                        hashes = item["hashes"]
-
-                        if consensus_hash and hashes and hashes != consensus_hash:
-                            console.print(
-                                f"[warning]Skipping server {server_name}: resolved media hash ({hashes[0][:8]}) "
-                                f"does not match consensus family ({consensus_hash[0][:8]}).[/warning]",
-                                style="yellow",
+                        try:
+                            ep_data = extractor.get_episode_data(ep, lang, server_info=server)
+                            hashes = extract_hashes_from_url(ep_data.get("video_url"))
+                            resolved_servers_data.append(
+                                {"server": server, "ep_data": ep_data, "hashes": hashes}
                             )
-                            continue
-                        valid_servers_data.append((server, ep_data))
+                        except Exception as e:
+                            console.print(f"[dim]Failed to resolve server {server_name}: {e}[/dim]")
 
-                    if not valid_servers_data and resolved_servers_data:
-                        # Fallback to resolved servers if everything got filtered out
-                        valid_servers_data = [
-                            (item["server"], item["ep_data"]) for item in resolved_servers_data
-                        ]
+                    if resolved_servers_data:
+                        from rich.prompt import IntPrompt
+                        from rich.table import Table
 
-                    if need_sub:
-                        # Prioritize servers that actually have matching soft subtitles for requested language
-                        valid_servers_data.sort(
-                            key=lambda item: 0 if item[1].get("subtitles") else 1
+                        table = Table(
+                            title=f"\n[bold cyan]Available Servers for Ep {ep['num']}[/bold cyan]"
                         )
+                        table.add_column("Index", justify="center", style="cyan", no_wrap=True)
+                        table.add_column("Server Name", style="magenta")
+                        table.add_column("Has Video?", justify="center", style="green")
+                        table.add_column("Has Soft Sub?", justify="center", style="yellow")
+
+                        for idx_s, item in enumerate(resolved_servers_data):
+                            s = item["server"]
+                            ep_d = item["ep_data"]
+                            table.add_row(
+                                str(idx_s + 1),
+                                s["name"] if s else "Default",
+                                "Yes" if ep_d.get("video_url") else "No",
+                                "Yes" if ep_d.get("subtitles") else "No",
+                            )
+                        console.print(table)
+
+                        choice = IntPrompt.ask(
+                            "Select server to download",
+                            choices=[str(i + 1) for i in range(len(resolved_servers_data))],
+                            default=1,
+                        )
+                        selected_item = resolved_servers_data[choice - 1]
+                        valid_servers_data = [(selected_item["server"], selected_item["ep_data"])]
+                else:
+                    # Headless / GUI Mode: Directly iterate through sorted preferred servers
+                    valid_servers_data = [(s, None) for s in servers]
 
                 # Try servers one by one until we get what we need
-                for s_idx, (server, ep_data) in enumerate(valid_servers_data):
+                for s_idx, (server, cached_ep_data) in enumerate(valid_servers_data):
                     server_name = server["name"] if server else "Default"
                     console.print(
                         f"[info]Trying server {s_idx + 1}/{len(valid_servers_data)}: {server_name}[/info]"
                     )
 
-                    # Re-resolve the server data dynamically to get fresh, unexpired URLs (CORS bypass/URL expiry)
-                    try:
-                        console.print(
-                            f"[dim]Re-resolving server {server_name} dynamically to get fresh URLs...[/dim]"
-                        )
-                        ep_data = extractor.get_episode_data(ep, lang, server_info=server)
-                    except Exception as re_err:
-                        console.print(
-                            f"[dim]Re-resolution failed: {re_err}. Using cached URLs.[/dim]"
-                        )
+                    ep_data = cached_ep_data
+                    if ep_data is None:
+                        try:
+                            ep_data = extractor.get_episode_data(ep, lang, server_info=server)
+                        except Exception as re_err:
+                            console.print(f"[dim]Resolution failed: {re_err}. Trying next...[/dim]")
+                            continue
+
+                    if not ep_data or not (ep_data.get("video_url") or ep_data.get("subtitles")):
+                        continue
 
                     # Handle Subtitles
                     if need_sub and not sub_success:

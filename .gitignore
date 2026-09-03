@@ -26,10 +26,14 @@ ffmpeg/*.exe
 yt-dlp/*.exe
 downloads/
 app_data/
+build/
+dist/
+scratch/tailwindcss.exe
 *.zip
 *.egg-info/
 .codegraph/
 .context-builder/
+
 
 
 
