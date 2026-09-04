@@ -1242,33 +1242,8 @@ class BatchDownloader:
                     if need_sub and not sub_success:
                         sub_tracks = ep_data.get("subtitles", [])
                         if not sub_tracks:
-                            # Fallback logic for Spanish subtitles if not found
-                            if lang.lower() in (
-                                "es",
-                                "spanish",
-                                "espanol",
-                                "español",
-                                "spa",
-                                "es-la",
-                                "latam",
-                            ):
-                                console.print(
-                                    f"[warning]Spanish subtitles not found on server {server_name}. Falling back to English.[/warning]",
-                                    style="yellow",
-                                )
-                                try:
-                                    fallback_data = extractor.get_episode_data(
-                                        ep, "en", server_info=server
-                                    )
-                                    sub_tracks = fallback_data.get("subtitles", [])
-                                except Exception as fe:
-                                    console.print(
-                                        f"[dim]Fallback to English subtitles failed: {fe}[/dim]"
-                                    )
-
-                        if not sub_tracks:
                             console.print(
-                                f"[warning]No subtitles found matching language: {lang} on server {server_name}[/warning]",
+                                f"[warning]No subtitles found matching requested language '{lang}' on server {server_name}. Skipping subtitle download for this server.[/warning]",
                                 style="yellow",
                             )
                         else:

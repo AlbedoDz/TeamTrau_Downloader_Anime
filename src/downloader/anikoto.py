@@ -371,6 +371,13 @@ class AnikotoExtractor(BaseExtractor):
         # Filter and select exactly one best subtitle track for requested language
         matched_subs = self._select_best_subtitle(all_tracks, lang, player_url)
 
+        if not matched_subs and all_tracks:
+            avail_langs = sorted(list({t.get("label", t.get("lang", "unknown")) for t in all_tracks if t.get("label") or t.get("lang")}))
+            console.print(
+                f"[warning]Ep {ep_num}: Subtitle for requested language '{lang}' not available. Skipping subtitle download. (Available tracks: {', '.join(avail_langs)})[/warning]",
+                style="yellow",
+            )
+
         # Resolve 720p HLS or best available
         video_url = None
         if all_videos:
