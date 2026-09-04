@@ -25,7 +25,7 @@ class QueueManager:
     def __init__(self):
         if getattr(self, "_initialized", False):
             return
-        self.db = DatabaseManager()
+        self._db = None
         self.config = QueueConfig(max_concurrent_downloads=3)
         self._active_tasks: dict[str, threading.Event] = {}  # task_id -> stop_event
         self._pool_lock = threading.RLock()
@@ -35,16 +35,25 @@ class QueueManager:
             max_workers=self.config.max_concurrent_downloads,
             thread_name_prefix="DLManagerWorker",
         )
-
-        # Start background dispatcher loop
-        self._dispatcher_thread = threading.Thread(
-            target=self._queue_dispatch_loop,
-            daemon=True,
-            name="QueueDispatcher",
-        )
-        self._dispatcher_thread.start()
+        self._dispatcher_thread = None
         self._initialized = True
-        manager_logger.log("info", "general", "Queue Manager Controller initialized.")
+
+    @property
+    def db(self) -> DatabaseManager:
+        """Lazy load DatabaseManager on first access to prevent blocking UI thread at app startup."""
+        if self._db is None:
+            with self._pool_lock:
+                if self._db is None:
+                    self._db = DatabaseManager()
+                    # Start background dispatcher loop once DB is ready
+                    self._dispatcher_thread = threading.Thread(
+                        target=self._queue_dispatch_loop,
+                        daemon=True,
+                        name="QueueDispatcher",
+                    )
+                    self._dispatcher_thread.start()
+                    manager_logger.log("info", "general", "Queue Manager Controller initialized.")
+        return self._db
 
     def add_task(
         self,

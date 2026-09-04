@@ -5,24 +5,13 @@
     "status": "completed",
     "progress": 100,
     "started_at": null,
-    "updated_at": "2026-09-04T11:48:28.402402"
+    "updated_at": "2026-09-04T12:04:03.525622"
   },
   "files_mapping": {
-    "agent/memory/lessons.json": "Modified (M)",
-    "pyproject.toml": "Modified (M)",
+    "agent/memory/state.json": "Modified (M)",
+    "scripts/build_exe.py": "Modified (M)",
     "src/core/queue_manager.py": "Modified (M)",
-    "src/data/db.py": "Modified (M)",
-    "src/downloader/core.py": "Modified (M)",
-    "src/downloader/hls_downloader.py": "Modified (M)",
-    "src/downloader/utils.py": "Modified (M)",
-    "src/ui/app_window.py": "Modified (M)",
-    "src/ui/assets/app.js": "Modified (M)",
-    "src/ui/assets/icon.ico": "Modified (M)",
-    "src/ui/assets/logo.png": "Modified (M)",
-    "src/ui/server.py": "Modified (M)",
-    "task.md": "Modified (M)",
-    "tests/test_ui_contracts.py": "Modified (M)",
-    "uv.lock": "Modified (M)"
+    "src/downloader/core.py": "Modified (M)"
   },
   "active_subagents": [],
   "milestones": []

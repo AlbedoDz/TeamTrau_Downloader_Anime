@@ -39,6 +39,18 @@ class DNSError(Exception):
 
 def get_local_tool_path(name: str) -> str | None:
     """Get path to a tool (yt-dlp or ffmpeg) in the local project directory if it exists."""
+    if getattr(sys, "frozen", False):
+        exe_dir = os.path.dirname(sys.executable)
+        candidates = [
+            os.path.join(exe_dir, "_internal", "ffmpeg", "ffmpeg.exe" if name == "ffmpeg" else "yt-dlp.exe"),
+            os.path.join(exe_dir, "ffmpeg", "ffmpeg.exe" if name == "ffmpeg" else "yt-dlp.exe"),
+            os.path.join(exe_dir, "_internal", "ffmpeg.exe" if name == "ffmpeg" else "yt-dlp.exe"),
+            os.path.join(exe_dir, "ffmpeg.exe" if name == "ffmpeg" else "yt-dlp.exe"),
+        ]
+        for cand in candidates:
+            if os.path.exists(cand):
+                return cand
+
     root_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     if name == "yt-dlp":
         local_path = os.path.join(root_dir, "yt-dlp", "yt-dlp.exe")
@@ -53,10 +65,9 @@ def get_local_tool_path(name: str) -> str | None:
 
 def get_local_ffmpeg_dir() -> str | None:
     """Get path to the local ffmpeg directory if it contains ffmpeg.exe."""
-    root_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    ffmpeg_dir = os.path.join(root_dir, "ffmpeg")
-    if os.path.exists(os.path.join(ffmpeg_dir, "ffmpeg.exe")):
-        return ffmpeg_dir
+    ffmpeg_exe = get_local_tool_path("ffmpeg")
+    if ffmpeg_exe:
+        return os.path.dirname(ffmpeg_exe)
     return None
 
 

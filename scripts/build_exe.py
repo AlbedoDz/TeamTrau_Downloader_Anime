@@ -70,11 +70,6 @@ def build_windows_exe(onefile: bool = False):
             print(f"[OUTPUT] Application folder: {target_folder}")
             print(f"[OUTPUT] Main executable: {target_exe}")
 
-            # Copy ffmpeg / yt-dlp to dist folder if not already bundled
-            if ffmpeg_dir.exists() and not (target_folder / "ffmpeg").exists():
-                shutil.copytree(ffmpeg_dir, target_folder / "ffmpeg", dirs_exist_ok=True)
-                print("[COPIED] Copied ffmpeg into distribution folder.")
-
         print("============================================================")
         return 0
     else:
