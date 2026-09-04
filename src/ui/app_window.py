@@ -43,11 +43,14 @@ from ui.server import TeamTrauAPIHandler
 
 
 def find_free_port(start_port: int = 8765, max_attempts: int = 50) -> int:
-    """Find an available TCP port starting from start_port."""
+    """Find an available TCP port starting from start_port instantly using bind check."""
     for port in range(start_port, start_port + max_attempts):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            if s.connect_ex(("127.0.0.1", port)) != 0:
+            try:
+                s.bind(("127.0.0.1", port))
                 return port
+            except OSError:
+                continue
     return start_port
 
 
@@ -211,21 +214,10 @@ class NativeAPI:
                         finally:
                             user32.CloseClipboard()
                         break
-                    time.sleep(0.01)
+                    time.sleep(0.005)
             except Exception:
                 pass
-
-        # Fallback to Tkinter if Win32 API fails
-        try:
-            import tkinter as tk
-
-            root = tk.Tk()
-            root.withdraw()
-            content = root.clipboard_get()
-            root.destroy()
-            return str(content).strip() if content else ""
-        except Exception:
-            return ""
+        return ""
 
     def get_version_info(self) -> dict:
         """Return app metadata."""

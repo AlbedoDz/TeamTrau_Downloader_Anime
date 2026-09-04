@@ -117,7 +117,15 @@
   - [x] Nâng cấp cơ chế xác minh file trên đĩa (Poka-Yoke): `QueueManager` kiểm tra trực tiếp từ `downloaded_result`, sau đó fallback đệ quy thông minh `rglob` để tìm kiếm file theo số tập nếu cần, tự động cập nhật lại `task.save_path` và SQLite `save_path`.
   - [x] Thử nghiệm thực tế với Bungo Stray Dogs WAN! 2 tập 10: Trạng thái hoàn thành `COMPLETED`, lưu chính xác đường dẫn Sonarr `downloads/Bungo Stray Dogs WAN! 2/Season 01/Bungo Stray Dogs WAN! 2 - S01E10.mp4`, phát preview và mở thư mục hoạt động chuẩn xác 100%.
   - [x] Kiểm thử tự động toàn diện: `ruff check` PASS 100%, `pytest` PASS 58/58 tests.
-  - [x] Biên dịch lại `.exe` và cập nhật bản phân phối `dist/TeamTrau_Downloader_Anime_Portable_v2.2.zip` (344.1 MB).
+- [x] Tối ưu hóa Bản Phân Phối Portable, Sửa Giật Lag 10s & Xử lý Bỏ qua Phụ đề Không Tồn Tại:
+  - [x] Kiểm tra & Tinh gọn folder `ffmpeg`: Xác minh `dist/TeamTrauDownloader` chỉ chứa 1 thư mục `_internal/ffmpeg`, không tồn tại thư mục trùng lặp ở root.
+  - [x] Khắc phục triệt để tình trạng đơ/lag 10s đầu khi mở app:
+    - [x] Tối ưu `find_free_port` trong `src/ui/app_window.py` từ `connect_ex` (chậm ~1s/port trên Windows) sang `s.bind(("127.0.0.1", port))` (tức thì 0.0001s).
+    - [x] Loại bỏ import `tkinter` blocking trong fallback của `read_clipboard`.
+  - [x] Xử lý bỏ qua ngôn ngữ phụ đề không tồn tại (Graceful Missing Subtitle Skip):
+    - [x] Cập nhật logic trong `src/downloader/core.py` và các extractor (`anikoto.py`, `allwish.py`, `animesuge.py`): Khi ngôn ngữ yêu cầu (ví dụ `es-LA`) không tồn tại trên bất kỳ server nào, nếu video tải thành công thì tự động skip phụ đề đó, thông báo rõ ngôn ngữ nào có sẵn và ngôn ngữ nào bị bỏ qua thay vì báo lỗi thất bại cả tập.
+  - [x] Kiểm thử tự động toàn diện: `ruff check` PASS 100%, `pytest` PASS 58/58 tests.
+  - [x] Đóng gói và nén bản phân phối mới nhất: `dist/TeamTrau_Downloader_Anime_Portable_v2.2.zip` (188.2 MB).
 
 
 

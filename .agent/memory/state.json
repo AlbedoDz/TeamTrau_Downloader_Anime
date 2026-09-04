@@ -5,14 +5,13 @@
     "status": "completed",
     "progress": 100,
     "started_at": null,
-    "updated_at": "2026-09-04T12:07:46.466638"
+    "updated_at": "2026-09-04T14:50:11.012341"
   },
   "files_mapping": {
     "agent/memory/state.json": "Modified (M)",
-    "src/downloader/allwish.py": "Modified (M)",
-    "src/downloader/anikoto.py": "Modified (M)",
-    "src/downloader/animesuge.py": "Modified (M)",
-    "src/downloader/core.py": "Modified (M)"
+    "src/downloader/core.py": "Modified (M)",
+    "src/ui/app_window.py": "Modified (M)",
+    "task.md": "Modified (M)"
   },
   "active_subagents": [],
   "milestones": []

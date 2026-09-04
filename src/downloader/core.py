@@ -1424,18 +1424,29 @@ class BatchDownloader:
 
                 # If after checking all servers we still failed to get required files
                 if not (sub_success and vid_success):
-                    missing_parts = []
-                    if not sub_success:
-                        missing_parts.append("Subtitle")
                     if not vid_success:
-                        missing_parts.append("Video")
-                    failed_downloads.append(
-                        (
-                            ep_label,
-                            " & ".join(missing_parts),
-                            "All available servers failed or were empty",
+                        missing_label = "Video" if sub_success or not need_sub else "Video & Subtitle"
+                        failed_downloads.append(
+                            (
+                                ep_label,
+                                missing_label,
+                                "All available servers failed or were empty",
+                            )
                         )
-                    )
+                    elif sub_only and not sub_success:
+                        failed_downloads.append(
+                            (
+                                ep_label,
+                                "Subtitle",
+                                f"Subtitle for '{lang}' not available on any server",
+                            )
+                        )
+                    elif not sub_success and need_sub:
+                        # Video succeeded, but requested subtitle language is not available on any server
+                        console.print(
+                            f"[warning]{ep_label}: Subtitle for requested language '{lang}' not available on any server. Skipped subtitle download.[/warning]",
+                            style="yellow",
+                        )
 
             # Delay between episode scraping/download sessions to avoid rate limits
             if idx < len(selected_episodes) - 1:
