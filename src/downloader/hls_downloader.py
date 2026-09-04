@@ -73,11 +73,16 @@ class MultiThreadedHLSDownloader:
                         executor.submit(download_fragment, idx, url)
                         for idx, url in enumerate(seg_urls)
                     ]
+                    failed_frags = 0
                     for future in as_completed(futures):
                         if not future.result():
-                            console.print(
-                                "[warning]Fragment download failed after retries[/warning]"
-                            )
+                            failed_frags += 1
+
+                if failed_frags > 0 or any(f is None or not os.path.exists(f) for f in frag_files):
+                    console.print(
+                        f"[error]Parallel HLS download failed: {failed_frags} fragment(s) missing. Aborting.[/error]"
+                    )
+                    return False
 
                 # Concatenate all downloaded fragments in exact sequential order
                 with open(temp_ts_path, "wb", buffering=1024 * 1024) as outfile:
@@ -91,7 +96,8 @@ class MultiThreadedHLSDownloader:
                 console.print("[error]Parallel HLS segment assembly empty[/error]")
                 return False
 
-            # Remux TS to MP4 using local/system ffmpeg
+            # Remux TS to MP4 using temporary output first (atomic rename)
+            temp_mp4_path = dest_path + ".tmp.mp4"
             ffmpeg_path = get_local_tool_path("ffmpeg") or "ffmpeg"
             remux_cmd = [
                 ffmpeg_path,
@@ -104,7 +110,7 @@ class MultiThreadedHLSDownloader:
                 "aac_adtstoasc",
                 "-movflags",
                 "+faststart",
-                dest_path,
+                temp_mp4_path,
             ]
             remux_res = subprocess.run(
                 remux_cmd,
@@ -115,17 +121,32 @@ class MultiThreadedHLSDownloader:
                 check=False,
             )
 
-            if os.path.exists(temp_ts_path):
-                os.remove(temp_ts_path)
-
-            if remux_res.returncode == 0 and os.path.exists(dest_path):
+            # Atomic replace if remux succeeded and file size > 0
+            if (
+                remux_res.returncode == 0
+                and os.path.exists(temp_mp4_path)
+                and os.path.getsize(temp_mp4_path) > 0
+            ):
+                if os.path.exists(dest_path):
+                    os.remove(dest_path)
+                os.replace(temp_mp4_path, dest_path)
                 console.print(f"[success]Parallel HLS download complete: {dest_path}[/success]")
                 return True
             else:
-                if os.path.exists(dest_path):
-                    os.remove(dest_path)
+                console.print(f"[error]ffmpeg remuxing failed: {remux_res.stderr}[/error]")
                 return False
 
         except Exception as e:
             console.print(f"[warning]Multi-threaded HLS Downloader error: {e}[/warning]")
             return False
+        finally:
+            if "temp_ts_path" in locals() and os.path.exists(temp_ts_path):
+                try:
+                    os.remove(temp_ts_path)
+                except Exception:
+                    pass
+            if "temp_mp4_path" in locals() and os.path.exists(temp_mp4_path):
+                try:
+                    os.remove(temp_mp4_path)
+                except Exception:
+                    pass

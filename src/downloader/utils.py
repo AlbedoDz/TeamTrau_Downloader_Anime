@@ -115,11 +115,12 @@ def classify_spanish_variant(label: str, code: str = "") -> str | None:
 
     # 2. Check if it matches Spanish keywords or codes
     is_spanish = False
-    if any(kw in lbl for kw in ["spanish", "espanol", "español", "castellano", "castilian"]):
+    if any(kw in lbl for kw in ["spanish", "espanol", "español", "castellano", "castilian", "spain"]):
         is_spanish = True
     elif c in (
         "es",
         "spa",
+        "spain",
         "spanish",
         "es-la",
         "es-419",
@@ -143,7 +144,31 @@ def classify_spanish_variant(label: str, code: str = "") -> str | None:
         "americalatina",
         "latinoamérica",
         "latinoamerica",
+        "latin america",
+        "latin_america",
+        "latinamerica",
+        "america latina",
+        "américa latina",
+        "americalatina",
+        "latinoamérica",
         "latam",
+        "spain latin",
+        "spain_latin",
+        "spainlatin",
+        "spanish latin",
+        "spanish_latin",
+        "spanishlatin",
+        "latin spanish",
+        "latin_spanish",
+        "latinspanish",
+        "espanol latin",
+        "español latin",
+        "spanish (latin)",
+        "spanish [latin]",
+        "español (latin)",
+        "espanol (latin)",
+        "spain (latin)",
+        "spain [latin]",
         "[lat]",
         "(lat)",
         "[la]",
@@ -173,10 +198,12 @@ def classify_spanish_variant(label: str, code: str = "") -> str | None:
         "es_419",
         "spa-la",
         "spa-lat",
+        "es-latin",
+        "spa-latin",
     ):
         return "es-LA"
     if re.search(
-        r"\[lat\]|\(lat\)|\b\[la\]|\(la\)|\b\[latam\]|\(latam\)|\b\[es-419\]|\(es-419\)|\bespañol\s*\(\s*la\s*\)|\bespanol\s*\(\s*la\s*\)|\bspanish\s*\(\s*la\s*\)|\bespañol\s*\(\s*lat\s*\)|\bespanol\s*\(\s*lat\s*\)|\bspanish\s*\(\s*lat\s*\)",
+        r"\[lat\]|\(lat\)|\b\[la\]|\(la\)|\b\[latam\]|\(latam\)|\b\[es-419\]|\(es-419\)|\bespañol\s*\(\s*la\s*\)|\bespanol\s*\(\s*la\s*\)|\bspanish\s*\(\s*la\s*\)|\bespañol\s*\(\s*lat\s*\)|\bespanol\s*\(\s*lat\s*\)|\bspanish\s*\(\s*lat\s*\)|\bspain\s*latin\b|\bspanish\s*latin\b|\blatin\s*spanish\b|\blatin\s*america\b",
         lbl,
     ):
         return "es-LA"

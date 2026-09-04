@@ -103,6 +103,7 @@ class NativeAPI:
         if self.window:
             try:
                 import ctypes
+
                 target = getattr(self.window, "native", None) or getattr(self.window, "gui", None)
                 if target and hasattr(target, "Handle"):
                     hwnd = int(target.Handle.ToInt64())
@@ -114,6 +115,7 @@ class NativeAPI:
 
                     if hasattr(target, "InvokeRequired") and target.InvokeRequired:
                         from System import Func, Type
+
                         target.BeginInvoke(Func[Type](_do_drag))
                     else:
                         _do_drag()
@@ -125,7 +127,9 @@ class NativeAPI:
 
     def select_folder(self, default_path: str = "") -> str:
         """Open native OS directory picker dialog without freezing the main loop."""
-        resolved_dir = str(Path(default_path).resolve()) if default_path else str(Path.home() / "Downloads")
+        resolved_dir = (
+            str(Path(default_path).resolve()) if default_path else str(Path.home() / "Downloads")
+        )
         if self.window:
             try:
                 import webview
@@ -147,7 +151,9 @@ class NativeAPI:
             root = tk.Tk()
             root.withdraw()
             root.attributes("-topmost", True)
-            selected = filedialog.askdirectory(initialdir=resolved_dir, title="Chọn thư mục tải xuống")
+            selected = filedialog.askdirectory(
+                initialdir=resolved_dir, title="Chọn thư mục tải xuống"
+            )
             root.destroy()
             return selected or ""
         except Exception as e:
@@ -167,6 +173,59 @@ class NativeAPI:
             return {"success": True}
         except Exception as exc:
             return {"success": False, "error": str(exc)}
+
+    def read_clipboard(self) -> str:
+        """Read clipboard text using native 64-bit Win32 API without spawning Tkinter UI."""
+        if sys.platform == "win32":
+            try:
+                import ctypes
+
+                user32 = ctypes.windll.user32
+                kernel32 = ctypes.windll.kernel32
+
+                user32.OpenClipboard.argtypes = [ctypes.c_void_p]
+                user32.OpenClipboard.restype = ctypes.c_bool
+                user32.CloseClipboard.argtypes = []
+                user32.CloseClipboard.restype = ctypes.c_bool
+                user32.GetClipboardData.argtypes = [ctypes.c_uint]
+                user32.GetClipboardData.restype = ctypes.c_void_p
+                kernel32.GlobalLock.argtypes = [ctypes.c_void_p]
+                kernel32.GlobalLock.restype = ctypes.c_void_p
+                kernel32.GlobalUnlock.argtypes = [ctypes.c_void_p]
+                kernel32.GlobalUnlock.restype = ctypes.c_bool
+
+                # Try opening clipboard with quick retry (non-blocking)
+                for _ in range(3):
+                    if user32.OpenClipboard(None):
+                        try:
+                            # 13 = CF_UNICODETEXT
+                            h_data = user32.GetClipboardData(13)
+                            if h_data:
+                                p_data = kernel32.GlobalLock(h_data)
+                                if p_data:
+                                    try:
+                                        val = ctypes.c_wchar_p(p_data).value
+                                        return str(val).strip() if val else ""
+                                    finally:
+                                        kernel32.GlobalUnlock(h_data)
+                        finally:
+                            user32.CloseClipboard()
+                        break
+                    time.sleep(0.01)
+            except Exception:
+                pass
+
+        # Fallback to Tkinter if Win32 API fails
+        try:
+            import tkinter as tk
+
+            root = tk.Tk()
+            root.withdraw()
+            content = root.clipboard_get()
+            root.destroy()
+            return str(content).strip() if content else ""
+        except Exception:
+            return ""
 
     def get_version_info(self) -> dict:
         """Return app metadata."""
@@ -199,8 +258,14 @@ def run_native_app():
     port = find_free_port(8765)
     start_background_server(port)
 
-    # Wait 200ms for HTTP listener
-    time.sleep(0.2)
+    # Active micro-polling for server readiness (replaces slow static 200ms sleep)
+    start_time = time.perf_counter()
+    while time.perf_counter() - start_time < 1.0:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(0.05)
+            if s.connect_ex(("127.0.0.1", port)) == 0:
+                break
+        time.sleep(0.01)
     app_url = f"http://127.0.0.1:{port}/"
 
     # Try launching via pywebview (Edge WebView2)

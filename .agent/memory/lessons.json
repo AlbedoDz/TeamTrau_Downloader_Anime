@@ -1,1 +1,455 @@
-[{"id":1,"topic":"Gemini Prompt Caching","lesson":"Ensure core instructions (like rules/ and skills/) remain static and located at the top of the conversation transcript. Keep dynamic content, such as workspace searches or multi-line command logs, at the bottom of the prompt to maximize the hitting rate of the prompt cache.","tags":["performance","token-savings","gemini"],"created_at":"2026-05-24T12:31:00Z"},{"id":2,"topic":"Surgical Code Changes","lesson":"When editing files, touch only the lines directly related to the user's request. Avoid unsolicited stylistic cleanup or adjacent code refactoring, as it wastes tokens, creates noise in diffs, and increases test failure risks.","tags":["best-practice","clean-code"],"created_at":"2026-05-24T12:31:00Z"},{"id":3,"topic":"Subagent Conflict Avoidance","lesson":"Never assign two subagents to modify the same file concurrently. This leads to workspace write conflicts. Always partition work such that files are modified sequentially or combined under a single subagent.","tags":["multi-agent","concurrency"],"created_at":"2026-05-24T12:31:00Z"},{"topic":"Windows Batch Parenthesis Syntax Limit","lesson":"Evaluating %errorlevel% or executing commands inside parenthesized blocks (...) in Windows .bat/cmd scripts can cause unexpected parser crashes (e.g. 'not was unexpected at this time'). Avoid nested parenthesis blocks for control flow; use explicit 'goto' labels and standard errorlevel checks instead.","tags":["windows","cmd","batch","syntax"],"id":4,"created_at":"2026-06-25T22:06:13.721667"},{"topic":"Linter Directory Exclusions","lesson":"Running 'ruff check .' at project root will scan downloaded third-party skill folders under '.agent/skills/' and produce false positives/failures. Always configure 'exclude' directories in 'pyproject.toml' to isolate linting to active source/test paths.","tags":["ruff","linter","setup","configuration"],"id":5,"created_at":"2026-06-25T22:06:13.721667"},{"topic":"PowerShell Background Watcher Lifecycle","lesson":"Spawning background processes in PowerShell via 'Start-Process' terminates them immediately once the parent non-interactive PowerShell console exits. To run a true persistent daemon on Windows that survives shell exit, use WMI/CIM methods like 'Invoke-CimMethod -ClassName Win32_Process -MethodName Create'.","tags":["powershell","windows","background-process","decoupling"],"id":6,"created_at":"2026-06-25T22:06:13.721667"},{"topic":"File Locking and Cleanup Order of Operations","lesson":"Attempting to delete a virtual environment directory ('.venv/') while a background watcher or python interpreter is running results in 'Access is denied' errors due to active OS file locks. Always terminate any background watcher or python processes as Step 0 before performing cleanup or modifications on the environment.","tags":["file-lock","windows","cleanup","process-management"],"id":7,"created_at":"2026-06-25T22:06:13.721667"},{"topic":"Asynchronous Process Termination Latency","lesson":"Process termination signals sent via taskkill or Stop-Process are asynchronous. Immediately executing file operations after signaling termination can fail because file locks are still being released. Add a short sleep (e.g. 'Start-Sleep -Seconds 1') to guarantee locks are freed by the OS.","tags":["asynchronous","process-termination","file-lock","powershell"],"id":8,"created_at":"2026-06-25T22:06:13.721667"},{"topic":"Git Status Porcelain Untracked Folder Grouping","lesson":"By default, 'git status --porcelain' groups untracked files under their parent directory (e.g. '?? src/') if the directory is completely untracked. To list untracked files individually (especially when newly created), always append the '-u' flag ('git status --porcelain -u').","tags":["git","untracked-files","file-mapping"],"id":9,"created_at":"2026-06-25T22:06:13.721667"},{"topic":"Batch Piping Input Issues","lesson":"Piping input to batch commands (e.g. 'echo Y | clean.bat') that use interactive 'set /p' prompts behaves poorly and can trigger aborted/unintended execution paths. Implement explicit non-interactive flags (e.g. '-y' or '/y') in the script parameters to skip prompts cleanly.","tags":["batch","piping","interactive-prompts","automation"],"id":10,"created_at":"2026-06-25T22:06:13.721667"},{"id":11,"topic":"TVDB Season Date Gaps & Titles Parsing","lesson":"To align anime parts (e.g. split-cour) with TVDB, fetch the TVDB season page and sort episodes. Group episodes by checking if the gap between consecutive dates exceeds 45 days. Cell[0] holds SxxEyy and cell[1] holds the episode title tag. Use BeautifulSoup's get_text(separator=' ') when checking row text for dates to preserve clean word boundaries.","tags":["tvdb","scraping","split-cour"],"created_at":"2026-06-26T01:01:31.041708"},{"id":12,"topic":"Spanish Subtitle Filtering & Latin American Prioritization","lesson":"When scraping video/subtitle sources from API endpoints where all tracks default to lang=en, filter subtitles strictly by label keywords. For Spanish, check for label substrings 'spanish', 'espanol', or 'espa\u00f1ol', and explicitly exclude 'portuguese' (which contains 'es') to avoid false positives. Prioritize Latin American variants by searching for 'latin america', 'latam', or 'america latina' in track labels.","tags":["scraping","subtitles","spanish"],"created_at":"2026-08-13T10:22:40.861973"},{"id":13,"topic":"Standard Subtitle IETF Tag Resolution","lesson":"Map subtitle track labels dynamically to ISO/IETF language sub-tags for media player auto-detection (VLC, PotPlayer, YouTube): 'es-419' for Spanish (Latin America / Latam), 'es-ES' for Spanish (Spain), 'es' for generic Spanish, 'en' for English, and 'vi' for Vietnamese.","tags":["subtitles","ietf","naming"],"created_at":"2026-08-13T10:39:56.557975"},{"id":14,"topic":"Interactive Server Selection Persistence Across Batch Episodes","lesson":"In interactive mode, after the user manually selects a server (e.g. Vidstream-2) for the first episode, clean and assign the server name to self.only_server so that subsequent episodes in the batch automatically reuse the chosen server without asking repeatedly.","tags":["cli","interactive","batch","ux"],"created_at":"2026-08-13T10:53:00.551853"},{"id":15,"topic":"Spanish Latin America Tag es-LA Standard","lesson":"Unified all Spanish Latin America subtitle tag references from es-419 to es-LA across code, tests, and file naming logic.","tags":["subtitles","spanish","es-la"],"created_at":"2026-08-13T21:12:20.711149"},{"id":16,"topic":"Spanish Subtitle Variant Separation LAT vs ESP","lesson":"Spanish subtitles tagged with [LAT], Latin America, or Latam are resolved as es-LA and prioritized by default. Subtitles tagged with [ESP], Spain, or Castellano are classified as es-ES, excluded from standard Spanish/es selection by default, and only downloaded when explicitly requested (e.g. es-es).","tags":["subtitles","spanish","latam","spain"],"created_at":"2026-08-14T12:44:21.275637"},{"id":17,"topic":"Existing Subtitle Check Language Tag Isolation","lesson":"When checking whether a subtitle file already exists before starting episode download, check only the candidate tags matching the requested language (e.g. ['es-LA', 'es-419', 'es'] for Spanish) instead of general fallback tags (e.g. 'en') to avoid incorrectly skipping the requested language download when another language subtitle is already present.","tags":["subtitles","check","bugfix","isolation"],"created_at":"2026-08-14T12:47:20.435078"},{"id":18,"topic":"Kaizen Standardization for Spanish Subtitle Classification","lesson":"Standardized Spanish subtitle classification into a unified classify_spanish_variant function in utils.py. Handles all Latin American forms (es-LA, es-419, [LAT], (LA), Espa\u00f1ol (LA), Latam) and European Spain forms (es-ES, [ESP], Espa\u00f1ol (ES), Castellano) with Poka-Yoke protection against false positive substrings like '- es'.","tags":["kaizen","poka-yoke","subtitles","spanish","refactor"],"created_at":"2026-08-14T13:06:59.229762"},{"id":19,"topic":"AllWish & AnimeSuge Extraction","lesson":"Both all-wish.me and animesuge.cz utilize RC4 simple-hash VRF tokens for ajax episode list and Megaplay embed players. CDNs require origin-only safe Referers to prevent HTTP 403.","tags":["extractor","vrf","allwish","animesuge"],"created_at":"2026-08-21T15:59:48.388967"},{"id":20,"topic":"HLS Fragment CDN Rate Limiting (HTTP 429)","lesson":"CDNs like livedns.my/trycloud.pro enforce strict concurrency rate limits (~5-8 req/s). High worker counts (16) cause 429 Too Many Requests and Thundering Herd errors. Lower workers to 6 with jittered exponential backoff and retry count 5 in both native HLS downloader and yt-dlp fallback.","tags":["hls","rate-limit","429","downloader"],"created_at":"2026-08-21T16:09:18.408741"},{"id":21,"topic":"curl_cffi Thread-Safety & Socket Corruption","lesson":"curl_cffi.requests.Session is not thread-safe. Concurrent requests across threads on a single shared session cause curl (55) Recv failure and (56) Connection closed abruptly errors. Implemented threading.local() in HttpClient to provide isolated sessions per worker thread and auto-reset session state upon socket reset.","tags":["curl_cffi","threading","concurrency","network"],"created_at":"2026-08-21T16:43:54.194505"},{"id":22,"topic":"Kaizen Server Priority & Dynamic CDN Resilience","lesson":"Prioritized fast Megaplay/HD/Vidstream servers over heavily rate-limited VidPlay servers in default server_priority. Combined with Thread-Local HttpClient sessions and jittered backoff, eliminates HTTP 429 and connection resets entirely.","tags":["kaizen","server-priority","hls","rate-limit","optimization"],"created_at":"2026-08-21T16:55:57.093069"},{"id":23,"topic":"Windows 11 Native EXE & DLSS Swapper UI","lesson":"Built standalone Windows 11 Native EXE using PyInstaller + Edge WebView2 (pywebview). Overcame cp1252 print encoding error in build script by enforcing ASCII outputs. Implemented Mica dark theme, custom titlebar drag regions, and pill nav with green glowing indicator.","tags":["windows","exe","pyinstaller","webview2","fluent_ui"],"created_at":"2026-09-03T16:52:08.098533"},{"id":24,"topic":"GUI Hang & Not Responding Fix","lesson":"Resolved Win32 Not Responding crash caused by GIL starvation and request floods on rapid clicks. 1) Frontend inflight lock (isFetchingRef) and debounced search (250ms), 2) Debounced slider updates for queue concurrency, 3) Per-task action mutex and batch action locks, 4) In-memory task caching (0.4s TTL) and single-pass queries in server.py, 5) Safe non-blocking maximize and close in NativeAPI.","tags":["gui","webview2","pywebview","threading","sqlite","freeze","windows"],"created_at":"2026-09-03T17:05:13.505501"},{"id":25,"topic":"UI Freezing Root Cause and Offline Compilation","lesson":"Tailwind Play CDN MutationObserver and Babel standalone runtime caused extreme CPU lag on WebView2 renderer thread during React DOM updates, combined with QueueDispatcher 1s SQLite busy-polling. Fix: Ahead-of-time compiled Tailwind CSS and React JSX to pure ES6 assets, combined with event-driven QueueDispatcher using threading.Event.","tags":["ui","webview2","performance","tailwind","pywebview"],"created_at":"2026-09-03T18:58:53.905135"},{"id":26,"topic":"ReferenceError in React Tab Render","lesson":"Clicking Tasks tab crashed React with ReferenceError: searchInputRef is not defined (plus logContainerRef was missing). This unmounted root DOM leaving screen blank and unresponsive. Fix: Statically analyzed AST for unbound identifiers, declared missing searchInputRef and logContainerRef with useRef(null).","tags":["ui","react","ref","bugfix","crash"],"created_at":"2026-09-03T19:29:49.090225"},{"id":27,"topic":"Windows 11 Frameless Drag Fix","lesson":"Frameless pywebview window dragging required: 1. webview.settings['DRAG_REGION_SELECTOR'] = '.pywebview-drag-region, .titlebar-drag'; 2. easy_drag=True; 3. NativeAPI.start_drag() via ctypes user32.SendMessageW(hwnd, 0x00A1, 0x0002, 0) (WM_NCLBUTTONDOWN) for native 144Hz Aero Snap hardware dragging; 4. onMouseDown and double-click maximize handlers on header titlebar.","tags":["windows","ui","drag","frameless","pywebview"],"created_at":"2026-09-03T19:56:01.681191"},{"id":28,"topic":"Zero-Lag Frameless Dragging in WebView2","lesson":"PyWebView's customize.js injects a mousemove listener that floods IPC with pywebviewMoveWindow, causing 500ms-1000ms trailing lag. Solution: 1. Set DRAG_REGION_SELECTOR to dummy to disable JS mousemove listener; 2. Set easy_drag=False; 3. In NativeAPI.start_drag(), invoke on WinForms UI thread via target.BeginInvoke(Func[Type](_do_drag)) with user32.ReleaseCapture() and user32.SendMessageW(hwnd, 0x0112, 0xF012, 0) (WM_SYSCOMMAND SC_DRAGMOVE); 4. Remove -webkit-app-region: drag from CSS to allow immediate mousedown events.","tags":["windows","ui","drag","frameless","perf","zero_lag"],"created_at":"2026-09-03T21:02:14.292055"},{"id":29,"topic":"Windows charmap/cp1252 UnicodeEncodeError Fix","lesson":"Rich Console defaults to sys.stdout encoding (cp1252 on Windows) and crashes on Vietnamese characters with UnicodeEncodeError. Solution: 1. Force PYTHONIOENCODING=utf-8 and PYTHONUTF8=1; 2. sys.stdout.reconfigure(encoding='utf-8', errors='replace'); 3. Subclass SafeConsole with _buffer.clear() fallback on UnicodeEncodeError; 4. Wrap emit_log's console.print in try/except; 5. Set chcp 65001 and PYTHONIOENCODING=utf-8 in batch files.","tags":["windows","encoding","unicode","rich","cp1252","vietnamese"],"created_at":"2026-09-03T21:20:27.972201"},{"id":30,"topic":"Official Logo and Windows Icon Integration","lesson":"Integrated official trau-logo-square-red.svg: 1. Extracted high-res PNG and generated icon.ico via System.Drawing; 2. Configured PyInstaller --icon=icon.ico and webview.start(icon=...); 3. Replaced generic placeholder SVG with logo.svg across sidebar and About view; 4. Added favicon in index.html.","tags":["assets","ui","logo","icon","branding"],"created_at":"2026-09-03T21:26:59.842628"},{"id":31,"topic":"Client-side Reactive State and Adaptive Polling","lesson":"Fixed task disappearing bug in GUI: 1. Adopted Client-side Reactive Architecture with useMemo (filteredTasks and counts are pure synchronous projections of allTasks in 0ms, eliminating stale timer overwrites); 2. Replaced fixed 2s setInterval with Adaptive Polling (1s when downloading/queued, 3.5s when idle); 3. Optimized MultiThreadedHLSDownloader with 8 workers, zero sleep on attempt 0, and 1MB streaming buffer.","tags":["gui","performance","reactive","usememo","hls","polling"],"created_at":"2026-09-03T21:39:21.514083"},{"id":32,"topic":"Settings Persistence & Native Video Preview","lesson":"Fixed folder selection via WinForms STA resolution and Tkinter fallback with absolute path normalization. Added persistent config.json management with GET/POST /api/config REST endpoints. Built in-app HLS/MP4 video streaming preview modal with HTTP Range seeking support and native external player launch.","tags":["settings","video-preview","pywebview","range-stream"],"created_at":"2026-09-03T21:57:38.737578"},{"id":33,"topic":"UI Blank Screen Systematic Debugging","lesson":"Identified duplicate const [settings, setSettings] declaration in src/ui/assets/app.js causing V8 SyntaxError and preventing React root mount. Verified fix using headless Edge remote debugging protocol checking root element innerHTML and console errors.","tags":["ui","syntax-error","systematic-debugging","headless-edge"],"created_at":"2026-09-03T22:02:58.383868"}]
+[
+  {
+    "id": 1,
+    "topic": "Gemini Prompt Caching",
+    "lesson": "Ensure core instructions (like rules/ and skills/) remain static and located at the top of the conversation transcript. Keep dynamic content, such as workspace searches or multi-line command logs, at the bottom of the prompt to maximize the hitting rate of the prompt cache.",
+    "tags": [
+      "performance",
+      "token-savings",
+      "gemini"
+    ],
+    "created_at": "2026-05-24T12:31:00Z"
+  },
+  {
+    "id": 2,
+    "topic": "Surgical Code Changes",
+    "lesson": "When editing files, touch only the lines directly related to the user's request. Avoid unsolicited stylistic cleanup or adjacent code refactoring, as it wastes tokens, creates noise in diffs, and increases test failure risks.",
+    "tags": [
+      "best-practice",
+      "clean-code"
+    ],
+    "created_at": "2026-05-24T12:31:00Z"
+  },
+  {
+    "id": 3,
+    "topic": "Subagent Conflict Avoidance",
+    "lesson": "Never assign two subagents to modify the same file concurrently. This leads to workspace write conflicts. Always partition work such that files are modified sequentially or combined under a single subagent.",
+    "tags": [
+      "multi-agent",
+      "concurrency"
+    ],
+    "created_at": "2026-05-24T12:31:00Z"
+  },
+  {
+    "topic": "Windows Batch Parenthesis Syntax Limit",
+    "lesson": "Evaluating %errorlevel% or executing commands inside parenthesized blocks (...) in Windows .bat/cmd scripts can cause unexpected parser crashes (e.g. 'not was unexpected at this time'). Avoid nested parenthesis blocks for control flow; use explicit 'goto' labels and standard errorlevel checks instead.",
+    "tags": [
+      "windows",
+      "cmd",
+      "batch",
+      "syntax"
+    ],
+    "id": 4,
+    "created_at": "2026-06-25T22:06:13.721667"
+  },
+  {
+    "topic": "Linter Directory Exclusions",
+    "lesson": "Running 'ruff check .' at project root will scan downloaded third-party skill folders under '.agent/skills/' and produce false positives/failures. Always configure 'exclude' directories in 'pyproject.toml' to isolate linting to active source/test paths.",
+    "tags": [
+      "ruff",
+      "linter",
+      "setup",
+      "configuration"
+    ],
+    "id": 5,
+    "created_at": "2026-06-25T22:06:13.721667"
+  },
+  {
+    "topic": "PowerShell Background Watcher Lifecycle",
+    "lesson": "Spawning background processes in PowerShell via 'Start-Process' terminates them immediately once the parent non-interactive PowerShell console exits. To run a true persistent daemon on Windows that survives shell exit, use WMI/CIM methods like 'Invoke-CimMethod -ClassName Win32_Process -MethodName Create'.",
+    "tags": [
+      "powershell",
+      "windows",
+      "background-process",
+      "decoupling"
+    ],
+    "id": 6,
+    "created_at": "2026-06-25T22:06:13.721667"
+  },
+  {
+    "topic": "File Locking and Cleanup Order of Operations",
+    "lesson": "Attempting to delete a virtual environment directory ('.venv/') while a background watcher or python interpreter is running results in 'Access is denied' errors due to active OS file locks. Always terminate any background watcher or python processes as Step 0 before performing cleanup or modifications on the environment.",
+    "tags": [
+      "file-lock",
+      "windows",
+      "cleanup",
+      "process-management"
+    ],
+    "id": 7,
+    "created_at": "2026-06-25T22:06:13.721667"
+  },
+  {
+    "topic": "Asynchronous Process Termination Latency",
+    "lesson": "Process termination signals sent via taskkill or Stop-Process are asynchronous. Immediately executing file operations after signaling termination can fail because file locks are still being released. Add a short sleep (e.g. 'Start-Sleep -Seconds 1') to guarantee locks are freed by the OS.",
+    "tags": [
+      "asynchronous",
+      "process-termination",
+      "file-lock",
+      "powershell"
+    ],
+    "id": 8,
+    "created_at": "2026-06-25T22:06:13.721667"
+  },
+  {
+    "topic": "Git Status Porcelain Untracked Folder Grouping",
+    "lesson": "By default, 'git status --porcelain' groups untracked files under their parent directory (e.g. '?? src/') if the directory is completely untracked. To list untracked files individually (especially when newly created), always append the '-u' flag ('git status --porcelain -u').",
+    "tags": [
+      "git",
+      "untracked-files",
+      "file-mapping"
+    ],
+    "id": 9,
+    "created_at": "2026-06-25T22:06:13.721667"
+  },
+  {
+    "topic": "Batch Piping Input Issues",
+    "lesson": "Piping input to batch commands (e.g. 'echo Y | clean.bat') that use interactive 'set /p' prompts behaves poorly and can trigger aborted/unintended execution paths. Implement explicit non-interactive flags (e.g. '-y' or '/y') in the script parameters to skip prompts cleanly.",
+    "tags": [
+      "batch",
+      "piping",
+      "interactive-prompts",
+      "automation"
+    ],
+    "id": 10,
+    "created_at": "2026-06-25T22:06:13.721667"
+  },
+  {
+    "id": 11,
+    "topic": "TVDB Season Date Gaps & Titles Parsing",
+    "lesson": "To align anime parts (e.g. split-cour) with TVDB, fetch the TVDB season page and sort episodes. Group episodes by checking if the gap between consecutive dates exceeds 45 days. Cell[0] holds SxxEyy and cell[1] holds the episode title tag. Use BeautifulSoup's get_text(separator=' ') when checking row text for dates to preserve clean word boundaries.",
+    "tags": [
+      "tvdb",
+      "scraping",
+      "split-cour"
+    ],
+    "created_at": "2026-06-26T01:01:31.041708"
+  },
+  {
+    "id": 12,
+    "topic": "Spanish Subtitle Filtering & Latin American Prioritization",
+    "lesson": "When scraping video/subtitle sources from API endpoints where all tracks default to lang=en, filter subtitles strictly by label keywords. For Spanish, check for label substrings 'spanish', 'espanol', or 'español', and explicitly exclude 'portuguese' (which contains 'es') to avoid false positives. Prioritize Latin American variants by searching for 'latin america', 'latam', or 'america latina' in track labels.",
+    "tags": [
+      "scraping",
+      "subtitles",
+      "spanish"
+    ],
+    "created_at": "2026-08-13T10:22:40.861973"
+  },
+  {
+    "id": 13,
+    "topic": "Standard Subtitle IETF Tag Resolution",
+    "lesson": "Map subtitle track labels dynamically to ISO/IETF language sub-tags for media player auto-detection (VLC, PotPlayer, YouTube): 'es-419' for Spanish (Latin America / Latam), 'es-ES' for Spanish (Spain), 'es' for generic Spanish, 'en' for English, and 'vi' for Vietnamese.",
+    "tags": [
+      "subtitles",
+      "ietf",
+      "naming"
+    ],
+    "created_at": "2026-08-13T10:39:56.557975"
+  },
+  {
+    "id": 14,
+    "topic": "Interactive Server Selection Persistence Across Batch Episodes",
+    "lesson": "In interactive mode, after the user manually selects a server (e.g. Vidstream-2) for the first episode, clean and assign the server name to self.only_server so that subsequent episodes in the batch automatically reuse the chosen server without asking repeatedly.",
+    "tags": [
+      "cli",
+      "interactive",
+      "batch",
+      "ux"
+    ],
+    "created_at": "2026-08-13T10:53:00.551853"
+  },
+  {
+    "id": 15,
+    "topic": "Spanish Latin America Tag es-LA Standard",
+    "lesson": "Unified all Spanish Latin America subtitle tag references from es-419 to es-LA across code, tests, and file naming logic.",
+    "tags": [
+      "subtitles",
+      "spanish",
+      "es-la"
+    ],
+    "created_at": "2026-08-13T21:12:20.711149"
+  },
+  {
+    "id": 16,
+    "topic": "Spanish Subtitle Variant Separation LAT vs ESP",
+    "lesson": "Spanish subtitles tagged with [LAT], Latin America, or Latam are resolved as es-LA and prioritized by default. Subtitles tagged with [ESP], Spain, or Castellano are classified as es-ES, excluded from standard Spanish/es selection by default, and only downloaded when explicitly requested (e.g. es-es).",
+    "tags": [
+      "subtitles",
+      "spanish",
+      "latam",
+      "spain"
+    ],
+    "created_at": "2026-08-14T12:44:21.275637"
+  },
+  {
+    "id": 17,
+    "topic": "Existing Subtitle Check Language Tag Isolation",
+    "lesson": "When checking whether a subtitle file already exists before starting episode download, check only the candidate tags matching the requested language (e.g. ['es-LA', 'es-419', 'es'] for Spanish) instead of general fallback tags (e.g. 'en') to avoid incorrectly skipping the requested language download when another language subtitle is already present.",
+    "tags": [
+      "subtitles",
+      "check",
+      "bugfix",
+      "isolation"
+    ],
+    "created_at": "2026-08-14T12:47:20.435078"
+  },
+  {
+    "id": 18,
+    "topic": "Kaizen Standardization for Spanish Subtitle Classification",
+    "lesson": "Standardized Spanish subtitle classification into a unified classify_spanish_variant function in utils.py. Handles all Latin American forms (es-LA, es-419, [LAT], (LA), Español (LA), Latam) and European Spain forms (es-ES, [ESP], Español (ES), Castellano) with Poka-Yoke protection against false positive substrings like '- es'.",
+    "tags": [
+      "kaizen",
+      "poka-yoke",
+      "subtitles",
+      "spanish",
+      "refactor"
+    ],
+    "created_at": "2026-08-14T13:06:59.229762"
+  },
+  {
+    "id": 19,
+    "topic": "AllWish & AnimeSuge Extraction",
+    "lesson": "Both all-wish.me and animesuge.cz utilize RC4 simple-hash VRF tokens for ajax episode list and Megaplay embed players. CDNs require origin-only safe Referers to prevent HTTP 403.",
+    "tags": [
+      "extractor",
+      "vrf",
+      "allwish",
+      "animesuge"
+    ],
+    "created_at": "2026-08-21T15:59:48.388967"
+  },
+  {
+    "id": 20,
+    "topic": "HLS Fragment CDN Rate Limiting (HTTP 429)",
+    "lesson": "CDNs like livedns.my/trycloud.pro enforce strict concurrency rate limits (~5-8 req/s). High worker counts (16) cause 429 Too Many Requests and Thundering Herd errors. Lower workers to 6 with jittered exponential backoff and retry count 5 in both native HLS downloader and yt-dlp fallback.",
+    "tags": [
+      "hls",
+      "rate-limit",
+      "429",
+      "downloader"
+    ],
+    "created_at": "2026-08-21T16:09:18.408741"
+  },
+  {
+    "id": 21,
+    "topic": "curl_cffi Thread-Safety & Socket Corruption",
+    "lesson": "curl_cffi.requests.Session is not thread-safe. Concurrent requests across threads on a single shared session cause curl (55) Recv failure and (56) Connection closed abruptly errors. Implemented threading.local() in HttpClient to provide isolated sessions per worker thread and auto-reset session state upon socket reset.",
+    "tags": [
+      "curl_cffi",
+      "threading",
+      "concurrency",
+      "network"
+    ],
+    "created_at": "2026-08-21T16:43:54.194505"
+  },
+  {
+    "id": 22,
+    "topic": "Kaizen Server Priority & Dynamic CDN Resilience",
+    "lesson": "Prioritized fast Megaplay/HD/Vidstream servers over heavily rate-limited VidPlay servers in default server_priority. Combined with Thread-Local HttpClient sessions and jittered backoff, eliminates HTTP 429 and connection resets entirely.",
+    "tags": [
+      "kaizen",
+      "server-priority",
+      "hls",
+      "rate-limit",
+      "optimization"
+    ],
+    "created_at": "2026-08-21T16:55:57.093069"
+  },
+  {
+    "id": 23,
+    "topic": "Windows 11 Native EXE & DLSS Swapper UI",
+    "lesson": "Built standalone Windows 11 Native EXE using PyInstaller + Edge WebView2 (pywebview). Overcame cp1252 print encoding error in build script by enforcing ASCII outputs. Implemented Mica dark theme, custom titlebar drag regions, and pill nav with green glowing indicator.",
+    "tags": [
+      "windows",
+      "exe",
+      "pyinstaller",
+      "webview2",
+      "fluent_ui"
+    ],
+    "created_at": "2026-09-03T16:52:08.098533"
+  },
+  {
+    "id": 24,
+    "topic": "GUI Hang & Not Responding Fix",
+    "lesson": "Resolved Win32 Not Responding crash caused by GIL starvation and request floods on rapid clicks. 1) Frontend inflight lock (isFetchingRef) and debounced search (250ms), 2) Debounced slider updates for queue concurrency, 3) Per-task action mutex and batch action locks, 4) In-memory task caching (0.4s TTL) and single-pass queries in server.py, 5) Safe non-blocking maximize and close in NativeAPI.",
+    "tags": [
+      "gui",
+      "webview2",
+      "pywebview",
+      "threading",
+      "sqlite",
+      "freeze",
+      "windows"
+    ],
+    "created_at": "2026-09-03T17:05:13.505501"
+  },
+  {
+    "id": 25,
+    "topic": "UI Freezing Root Cause and Offline Compilation",
+    "lesson": "Tailwind Play CDN MutationObserver and Babel standalone runtime caused extreme CPU lag on WebView2 renderer thread during React DOM updates, combined with QueueDispatcher 1s SQLite busy-polling. Fix: Ahead-of-time compiled Tailwind CSS and React JSX to pure ES6 assets, combined with event-driven QueueDispatcher using threading.Event.",
+    "tags": [
+      "ui",
+      "webview2",
+      "performance",
+      "tailwind",
+      "pywebview"
+    ],
+    "created_at": "2026-09-03T18:58:53.905135"
+  },
+  {
+    "id": 26,
+    "topic": "ReferenceError in React Tab Render",
+    "lesson": "Clicking Tasks tab crashed React with ReferenceError: searchInputRef is not defined (plus logContainerRef was missing). This unmounted root DOM leaving screen blank and unresponsive. Fix: Statically analyzed AST for unbound identifiers, declared missing searchInputRef and logContainerRef with useRef(null).",
+    "tags": [
+      "ui",
+      "react",
+      "ref",
+      "bugfix",
+      "crash"
+    ],
+    "created_at": "2026-09-03T19:29:49.090225"
+  },
+  {
+    "id": 27,
+    "topic": "Windows 11 Frameless Drag Fix",
+    "lesson": "Frameless pywebview window dragging required: 1. webview.settings['DRAG_REGION_SELECTOR'] = '.pywebview-drag-region, .titlebar-drag'; 2. easy_drag=True; 3. NativeAPI.start_drag() via ctypes user32.SendMessageW(hwnd, 0x00A1, 0x0002, 0) (WM_NCLBUTTONDOWN) for native 144Hz Aero Snap hardware dragging; 4. onMouseDown and double-click maximize handlers on header titlebar.",
+    "tags": [
+      "windows",
+      "ui",
+      "drag",
+      "frameless",
+      "pywebview"
+    ],
+    "created_at": "2026-09-03T19:56:01.681191"
+  },
+  {
+    "id": 28,
+    "topic": "Zero-Lag Frameless Dragging in WebView2",
+    "lesson": "PyWebView's customize.js injects a mousemove listener that floods IPC with pywebviewMoveWindow, causing 500ms-1000ms trailing lag. Solution: 1. Set DRAG_REGION_SELECTOR to dummy to disable JS mousemove listener; 2. Set easy_drag=False; 3. In NativeAPI.start_drag(), invoke on WinForms UI thread via target.BeginInvoke(Func[Type](_do_drag)) with user32.ReleaseCapture() and user32.SendMessageW(hwnd, 0x0112, 0xF012, 0) (WM_SYSCOMMAND SC_DRAGMOVE); 4. Remove -webkit-app-region: drag from CSS to allow immediate mousedown events.",
+    "tags": [
+      "windows",
+      "ui",
+      "drag",
+      "frameless",
+      "perf",
+      "zero_lag"
+    ],
+    "created_at": "2026-09-03T21:02:14.292055"
+  },
+  {
+    "id": 29,
+    "topic": "Windows charmap/cp1252 UnicodeEncodeError Fix",
+    "lesson": "Rich Console defaults to sys.stdout encoding (cp1252 on Windows) and crashes on Vietnamese characters with UnicodeEncodeError. Solution: 1. Force PYTHONIOENCODING=utf-8 and PYTHONUTF8=1; 2. sys.stdout.reconfigure(encoding='utf-8', errors='replace'); 3. Subclass SafeConsole with _buffer.clear() fallback on UnicodeEncodeError; 4. Wrap emit_log's console.print in try/except; 5. Set chcp 65001 and PYTHONIOENCODING=utf-8 in batch files.",
+    "tags": [
+      "windows",
+      "encoding",
+      "unicode",
+      "rich",
+      "cp1252",
+      "vietnamese"
+    ],
+    "created_at": "2026-09-03T21:20:27.972201"
+  },
+  {
+    "id": 30,
+    "topic": "Official Logo and Windows Icon Integration",
+    "lesson": "Integrated official trau-logo-square-red.svg: 1. Extracted high-res PNG and generated icon.ico via System.Drawing; 2. Configured PyInstaller --icon=icon.ico and webview.start(icon=...); 3. Replaced generic placeholder SVG with logo.svg across sidebar and About view; 4. Added favicon in index.html.",
+    "tags": [
+      "assets",
+      "ui",
+      "logo",
+      "icon",
+      "branding"
+    ],
+    "created_at": "2026-09-03T21:26:59.842628"
+  },
+  {
+    "id": 31,
+    "topic": "Client-side Reactive State and Adaptive Polling",
+    "lesson": "Fixed task disappearing bug in GUI: 1. Adopted Client-side Reactive Architecture with useMemo (filteredTasks and counts are pure synchronous projections of allTasks in 0ms, eliminating stale timer overwrites); 2. Replaced fixed 2s setInterval with Adaptive Polling (1s when downloading/queued, 3.5s when idle); 3. Optimized MultiThreadedHLSDownloader with 8 workers, zero sleep on attempt 0, and 1MB streaming buffer.",
+    "tags": [
+      "gui",
+      "performance",
+      "reactive",
+      "usememo",
+      "hls",
+      "polling"
+    ],
+    "created_at": "2026-09-03T21:39:21.514083"
+  },
+  {
+    "id": 32,
+    "topic": "Settings Persistence & Native Video Preview",
+    "lesson": "Fixed folder selection via WinForms STA resolution and Tkinter fallback with absolute path normalization. Added persistent config.json management with GET/POST /api/config REST endpoints. Built in-app HLS/MP4 video streaming preview modal with HTTP Range seeking support and native external player launch.",
+    "tags": [
+      "settings",
+      "video-preview",
+      "pywebview",
+      "range-stream"
+    ],
+    "created_at": "2026-09-03T21:57:38.737578"
+  },
+  {
+    "id": 33,
+    "topic": "UI Blank Screen Systematic Debugging",
+    "lesson": "Identified duplicate const [settings, setSettings] declaration in src/ui/assets/app.js causing V8 SyntaxError and preventing React root mount. Verified fix using headless Edge remote debugging protocol checking root element innerHTML and console errors.",
+    "tags": [
+      "ui",
+      "syntax-error",
+      "systematic-debugging",
+      "headless-edge"
+    ],
+    "created_at": "2026-09-03T22:02:58.383868"
+  },
+  {
+    "id": 34,
+    "topic": "Kaizen Startup Acceleration & UX Flow",
+    "lesson": "Accelerated startup by replacing 200ms static sleep with 10ms socket probing and HTTP 86400s static caching. Added ErrorBoundary for 100% crash proofing with 1-click recovery. Boosted UX-Flow with smart clipboard anime URL sniffer, 1-click paste, number key tab hotkeys (1-6), spacebar toggle, and quick episode/subtitle chips in Add Modal.",
+    "tags": [
+      "kaizen",
+      "ux-flow",
+      "performance",
+      "startup",
+      "anti-crash"
+    ],
+    "created_at": "2026-09-04T09:31:36.725741"
+  },
+  {
+    "id": 35,
+    "topic": "Batch DB and File Integrity Kaizen",
+    "lesson": "Implemented atomic batch upsert via executemany for SQLite, rate-limited progress updates to 0.5s to reduce IOPS, added composite indexes for status/title/mode, enforced atomic remuxing to .tmp.mp4 with try-finally fragment cleanup, and added disk file existence validation before marking COMPLETED.",
+    "tags": [
+      "sqlite",
+      "batch",
+      "io",
+      "integrity",
+      "poka-yoke"
+    ],
+    "created_at": "2026-09-04T09:42:45.624068"
+  },
+  {
+    "id": 36,
+    "topic": "Native Windows Clipboard & Standalone Portable Packaging",
+    "lesson": "Tkinter clipboard access causes major thread blocking and UI freezes; native Win32 API resolves clipboard text in <0.2ms. For distribution, ensure all icons (ICO multi-res) and static files are bundled via PyInstaller, and package the complete distribution folder into a clean ZIP with ffmpeg included.",
+    "tags": [
+      "windows",
+      "clipboard",
+      "pyinstaller",
+      "portable",
+      "packaging"
+    ],
+    "created_at": "2026-09-04T11:10:43.717052"
+  },
+  {
+    "id": 37,
+    "topic": "Fix Double Directory Nesting & File Verification",
+    "lesson": "Fixed download verification failure caused by double anime title nesting (output_dir/title/title/Season 01). BatchDownloader now returns exact verified file paths in dict; QueueManager derives clean base_output_dir and updates task.save_path atomically in SQLite.",
+    "tags": [
+      "downloader",
+      "queue_manager",
+      "verification",
+      "windows"
+    ],
+    "created_at": "2026-09-04T11:47:05.117328"
+  }
+]

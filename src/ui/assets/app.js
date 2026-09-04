@@ -121,8 +121,12 @@ function App() {
     if (selectedCategory && selectedCategory !== 'all') {
       if (['queued', 'downloading', 'paused', 'completed', 'failed'].includes(selectedCategory)) {
         list = list.filter(t => t.status === selectedCategory);
-      } else if (['anime', 'video', 'subtitle'].includes(selectedCategory)) {
-        list = list.filter(t => t.download_mode === selectedCategory);
+      } else if (selectedCategory === 'anime') {
+        list = list.filter(t => t.download_mode === 'full' || t.category === 'anime');
+      } else if (selectedCategory === 'video') {
+        list = list.filter(t => t.download_mode === 'video_only' || t.category === 'video');
+      } else if (selectedCategory === 'subtitle') {
+        list = list.filter(t => t.download_mode === 'sub_only' || t.category === 'subtitle');
       }
     }
     if (searchQuery.trim()) {
@@ -159,26 +163,71 @@ function App() {
   const [logLevelFilter, setLogLevelFilter] = useState('ALL');
   const [autoScrollLogs, setAutoScrollLogs] = useState(true);
 
-  // Settings State
-  const [settings, setSettings] = useState({
-    outputDir: './downloads',
-    maxWorkers: 3,
-    proxyUrl: '',
-    namingFormat: 'simple',
-    delaySec: 1.0
+  // Settings State with instant LocalStorage caching (0ms frame 0 render)
+  const [settings, setSettings] = useState(() => {
+    try {
+      const cached = localStorage.getItem('tt_settings');
+      if (cached) return JSON.parse(cached);
+    } catch {}
+    return {
+      outputDir: './downloads',
+      maxWorkers: 3,
+      proxyUrl: '',
+      namingFormat: 'simple',
+      delaySec: 1.0,
+      autoDetectClipboard: false
+    };
   });
 
-  // Load saved config on mount
+  // Smart Clipboard Anime URL Sniffer (UX Flow)
+  const [detectedClipUrl, setDetectedClipUrl] = useState('');
+  const checkClipboardUrl = async () => {
+    if (!settings.autoDetectClipboard) return;
+    try {
+      let text = '';
+      if (window.pywebview && window.pywebview.api && window.pywebview.api.read_clipboard) {
+        text = await window.pywebview.api.read_clipboard();
+      } else if (navigator.clipboard && navigator.clipboard.readText) {
+        text = await navigator.clipboard.readText();
+      }
+      text = (text || '').trim();
+      if (text && text.startsWith('http') && /(?:anikoto|animesuge|allwish|all-wish|animecube)/i.test(text)) {
+        if (text !== url) {
+          setDetectedClipUrl(text);
+        }
+      }
+    } catch {}
+  };
+
+  useEffect(() => {
+    if (!settings.autoDetectClipboard) return;
+    const t = setTimeout(checkClipboardUrl, 1000);
+    const onFocus = () => {
+      setTimeout(checkClipboardUrl, 200);
+    };
+    window.addEventListener('focus', onFocus);
+    return () => {
+      clearTimeout(t);
+      window.removeEventListener('focus', onFocus);
+    };
+  }, [url, settings.autoDetectClipboard]);
+
+  // Load saved config on mount & sync cache
   useEffect(() => {
     fetch('/api/config').then(r => r.json()).then(d => {
       if (d.success && d.config) {
-        setSettings({
+        const cfg = {
           outputDir: d.config.outputDir || './downloads',
           maxWorkers: d.config.maxWorkers || 3,
           proxyUrl: d.config.proxyUrl || '',
           delaySec: d.config.delaySec || 1.0,
-          namingFormat: d.config.namingFormat || 'simple'
-        });
+          namingFormat: d.config.namingFormat || 'simple',
+          autoDetectClipboard: d.config.autoDetectClipboard ?? false
+        };
+        setSettings(cfg);
+        try {
+          localStorage.setItem('tt_settings', JSON.stringify(cfg));
+        } catch {}
       }
     }).catch(() => {});
   }, []);
@@ -403,12 +452,32 @@ function App() {
       }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') {
         e.preventDefault();
-        if (searchInputRef.current) searchInputRef.current.focus();
+        setActiveTab('tasks');
+        setTimeout(() => {
+          if (searchInputRef.current) searchInputRef.current.focus();
+        }, 50);
+      }
+      const isInput = ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName);
+      if (!isInput && !isAddModalOpen && !taskDetail && !previewTask) {
+        if (e.key === '1') setActiveTab('home');
+        if (e.key === '2') setActiveTab('tasks');
+        if (e.key === '3') setActiveTab('utilities');
+        if (e.key === '4') setActiveTab('history');
+        if (e.key === '5') setActiveTab('settings');
+        if (e.key === '6') setActiveTab('about');
+        if (e.key === ' ') {
+          e.preventDefault();
+          if (counts.downloading > 0) {
+            runQueueAction('/api/queue/pause-all', 'Đã tạm dừng tất cả tác vụ', 'warn');
+          } else if (counts.paused > 0) {
+            runQueueAction('/api/queue/resume-all', 'Đã tiếp tục tất cả tác vụ', 'success');
+          }
+        }
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
+  }, [isAddModalOpen, taskDetail, previewTask, counts.downloading, counts.paused]);
 
   // Detected Provider
   const detectedProvider = useMemo(() => detectProviderFromUrl(url), [url]);
@@ -759,7 +828,38 @@ function App() {
     className: "max-w-5xl space-y-6"
   }, /*#__PURE__*/React.createElement("div", {
     className: "bg-[#131824] border border-white/[0.08] rounded-2xl p-5 shadow-lg"
-  }, /*#__PURE__*/React.createElement("label", {
+  }, detectedClipUrl && /*#__PURE__*/React.createElement("div", {
+    className: "mb-3.5 px-4 py-2.5 rounded-xl bg-emerald-950/40 border border-emerald-500/40 flex items-center justify-between gap-3 text-xs animate-in fade-in duration-200"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "flex items-center gap-2 text-emerald-300 truncate"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "text-base"
+  }, "📋"), /*#__PURE__*/React.createElement("span", {
+    className: "font-bold shrink-0"
+  }, "Nhận diện từ Clipboard:"), /*#__PURE__*/React.createElement("span", {
+    className: "font-mono truncate max-w-sm text-slate-300"
+  }, detectedClipUrl)), /*#__PURE__*/React.createElement("div", {
+    className: "flex items-center gap-2 shrink-0"
+  }, /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    onClick: () => {
+      const u = detectedClipUrl;
+      setUrl(u);
+      setDetectedClipUrl('');
+      setTimeout(() => {
+        const form = document.querySelector('form');
+        if (form) form.dispatchEvent(new Event('submit', {
+          cancelable: true,
+          bubbles: true
+        }));
+      }, 40);
+    },
+    className: "px-3 py-1 bg-emerald-500 hover:bg-emerald-400 text-black font-bold text-xs rounded-lg shadow transition-all active:scale-95 flex items-center gap-1"
+  }, /*#__PURE__*/React.createElement("span", null, "⚡"), " Dán & Phân Tích"), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    onClick: () => setDetectedClipUrl(''),
+    className: "text-slate-400 hover:text-slate-200 text-xs px-2 py-1 rounded hover:bg-white/10"
+  }, "✕"))), /*#__PURE__*/React.createElement("label", {
     className: "block text-xs font-bold text-slate-300 mb-2 uppercase tracking-wider"
   }, "Anime URL"), /*#__PURE__*/React.createElement("form", {
     onSubmit: handleParse,
@@ -771,8 +871,28 @@ function App() {
     value: url,
     onChange: e => setUrl(e.target.value),
     placeholder: "Dán đường dẫn anime (AllWish, AniKoto, AnimeSuge, AnimeCube)...",
-    className: "w-full bg-[#0A0D14] border border-white/10 focus:border-emerald-500 text-xs text-white rounded-xl px-4 py-3 placeholder:text-slate-500 focus:outline-none transition-all"
-  }), detectedProvider && /*#__PURE__*/React.createElement("span", {
+    className: "w-full bg-[#0A0D14] border border-white/10 focus:border-emerald-500 text-xs text-white rounded-xl px-4 py-3 placeholder:text-slate-500 focus:outline-none transition-all pr-36"
+  }), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    onClick: async () => {
+      try {
+        let text = '';
+        if (window.pywebview && window.pywebview.api && window.pywebview.api.read_clipboard) {
+          text = await window.pywebview.api.read_clipboard();
+        } else if (navigator.clipboard) {
+          text = await navigator.clipboard.readText();
+        }
+        if (text) {
+          setUrl(text.trim());
+          showToast('Đã dán URL từ bộ nhớ tạm', 'info');
+        }
+      } catch {
+        showToast('Không thể đọc clipboard', 'warn');
+      }
+    },
+    className: `absolute ${detectedProvider ? 'right-28' : 'right-3'} top-2.5 px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-[10px] font-medium text-slate-300 border border-white/10 transition-all active:scale-95`,
+    title: "Dán từ clipboard"
+  }, "📋 Dán"), detectedProvider && /*#__PURE__*/React.createElement("span", {
     className: `absolute right-3 top-2.5 px-2 py-0.5 rounded text-[10px] font-bold uppercase border ${detectedProvider.color}`
   }, detectedProvider.name)), /*#__PURE__*/React.createElement("button", {
     type: "submit",
@@ -1248,6 +1368,20 @@ function App() {
     }),
     placeholder: "http://user:pass@127.0.0.1:7890",
     className: "w-full bg-[#0A0D14] border border-white/10 text-xs px-3.5 py-2.5 rounded-xl font-mono text-white focus:outline-none focus:border-emerald-500"
+  })), /*#__PURE__*/React.createElement("div", {
+    className: "flex items-center justify-between p-3.5 bg-[#0A0D14] border border-white/10 rounded-xl"
+  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    className: "text-xs font-bold text-slate-200"
+  }, "Tự Động Nhận Diện Link Anime Từ Clipboard"), /*#__PURE__*/React.createElement("div", {
+    className: "text-[11px] text-slate-500 mt-0.5"
+  }, "Chỉ bật khi cần gợi ý tự động. Tắt tùy chọn này giúp khởi động tức thì 0ms")), /*#__PURE__*/React.createElement("input", {
+    type: "checkbox",
+    checked: settings.autoDetectClipboard,
+    onChange: e => setSettings({
+      ...settings,
+      autoDetectClipboard: e.target.checked
+    }),
+    className: "w-4 h-4 accent-emerald-500 cursor-pointer"
   })), /*#__PURE__*/React.createElement("button", {
     type: "button",
     disabled: actionInProgress,
@@ -1360,10 +1494,66 @@ function App() {
     type: "text",
     value: rangeInput,
     onChange: e => setRangeInput(e.target.value),
+    onKeyDown: e => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        handleConfirmAdd();
+      }
+    },
     className: "w-full bg-[#0A0D14] border border-white/10 text-xs px-3.5 py-2.5 rounded-xl font-mono text-white focus:outline-none focus:border-emerald-500"
-  })), downloadMode !== 'video_only' && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
+  }), /*#__PURE__*/React.createElement("div", {
+    className: "flex flex-wrap gap-1.5 mt-2"
+  }, [{
+    label: 'Tất cả tập',
+    val: 'all'
+  }, {
+    label: 'Tập 1',
+    val: '1'
+  }, {
+    label: '1-5',
+    val: '1-5'
+  }, {
+    label: '1-12',
+    val: '1-12'
+  }, {
+    label: '13-24',
+    val: '13-24'
+  }, {
+    label: 'Tập chẵn',
+    val: 'even'
+  }, {
+    label: 'Tập lẻ',
+    val: 'odd'
+  }].map(item => /*#__PURE__*/React.createElement("button", {
+    key: item.val,
+    type: "button",
+    onClick: () => setRangeInput(item.val),
+    className: `text-[10px] px-2.5 py-1 rounded-lg border transition-all ${rangeInput === item.val ? 'bg-emerald-500/20 border-emerald-500 text-emerald-300 font-bold' : 'bg-white/5 border-white/5 text-slate-400 hover:text-white'}`
+  }, item.label)))), downloadMode !== 'video_only' && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
     className: "block text-xs font-bold text-slate-300 mb-1.5"
   }, "Ngôn Ngữ Phụ Đề Tải Về"), /*#__PURE__*/React.createElement("div", {
+    className: "flex flex-wrap gap-1.5 mb-2"
+  }, [{
+    label: '⚡ Latam + Eng',
+    langs: ['es-LA', 'en']
+  }, {
+    label: 'Chỉ Latam (es-LA)',
+    langs: ['es-LA']
+  }, {
+    label: 'Chỉ Tiếng Anh',
+    langs: ['en']
+  }, {
+    label: 'Chỉ Tiếng Việt',
+    langs: ['vi']
+  }, {
+    label: 'Tất cả',
+    langs: ['es-LA', 'es-ES', 'en', 'vi', 'ja']
+  }].map(p => /*#__PURE__*/React.createElement("button", {
+    key: p.label,
+    type: "button",
+    onClick: () => setSelectedLangs(p.langs),
+    className: "text-[10px] px-2 py-0.5 rounded-md bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white border border-white/5 transition-all"
+  }, p.label))), /*#__PURE__*/React.createElement("div", {
     className: "flex flex-wrap gap-2"
   }, [{
     id: 'es-LA',
@@ -1596,5 +1786,39 @@ function App() {
     className: "ml-2"
   }, l.message))))));
 }
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
+  componentDidCatch(error, errorInfo) {
+    console.error("ErrorBoundary caught exception:", error, errorInfo);
+  }
+  render() {
+    if (this.state.hasError) {
+      return /*#__PURE__*/React.createElement("div", {
+        className: "h-screen w-screen bg-[#0A0D14] flex flex-col items-center justify-center p-8 text-white select-none"
+      }, /*#__PURE__*/React.createElement("div", {
+        className: "max-w-md w-full bg-[#131824] border border-rose-500/30 rounded-2xl p-6 shadow-2xl text-center space-y-4 animate-in zoom-in-95"
+      }, /*#__PURE__*/React.createElement("div", {
+        className: "text-3xl text-rose-400"
+      }, "🛡️"), /*#__PURE__*/React.createElement("h2", {
+        className: "text-base font-bold text-rose-400"
+      }, "Đã tự động bảo vệ giao diện"), /*#__PURE__*/React.createElement("p", {
+        className: "text-xs text-slate-300 leading-relaxed"
+      }, "Phát hiện sự cố hiển thị. Các tiến trình tải ngầm và dữ liệu SQLite vẫn an toàn. Bấm nút dưới để khôi phục tức thời."), /*#__PURE__*/React.createElement("div", {
+        className: "bg-black/60 p-2.5 rounded-xl text-[11px] font-mono text-rose-300 text-left truncate"
+      }, this.state.error?.message || "UI render exception caught"), /*#__PURE__*/React.createElement("button", {
+        type: "button",
+        onClick: () => this.setState({ hasError: false, error: null }),
+        className: "w-full py-2.5 bg-emerald-500 hover:bg-emerald-400 text-black font-bold text-xs rounded-xl transition-all shadow-lg active:scale-95"
+      }, "⚡ Khôi Phục Giao Diện Ngay")));
+    }
+    return this.props.children;
+  }
+}
 const root = ReactDOM.createRoot(document.getElementById('root'));
-root.render(/*#__PURE__*/React.createElement(App, null));
+root.render(/*#__PURE__*/React.createElement(ErrorBoundary, null, /*#__PURE__*/React.createElement(App, null)));

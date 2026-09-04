@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -82,10 +83,11 @@ def load_app_settings() -> dict:
         "proxyUrl": "",
         "delaySec": 1.0,
         "namingFormat": "simple",
+        "autoDetectClipboard": False,
     }
     if CONFIG_PATH.exists():
         try:
-            with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+            with open(CONFIG_PATH, encoding="utf-8") as f:
                 data = json.load(f)
                 default_settings.update(data)
         except Exception:
@@ -130,6 +132,15 @@ class TeamTrauAPIHandler(SimpleHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS, DELETE")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.end_headers()
+
+    def end_headers(self):
+        """Inject high-performance caching headers for static assets."""
+        path_lower = getattr(self, "path", "").lower().split("?")[0]
+        if any(
+            path_lower.endswith(ext) for ext in (".js", ".css", ".svg", ".ico", ".png", ".woff2")
+        ):
+            self.send_header("Cache-Control", "public, max-age=86400")
+        super().end_headers()
 
     def stream_video_file(self, file_path: Path):
         """Stream local MP4/MKV video with HTTP Range header support for seeking."""
@@ -205,14 +216,18 @@ class TeamTrauAPIHandler(SimpleHTTPRequestHandler):
                     all_tasks = db.get_all_tasks(status_filter="all")
                     counts = {
                         "all": len(all_tasks),
-                        "downloading": sum(1 for t in all_tasks if t.status == TaskStatus.DOWNLOADING),
+                        "downloading": sum(
+                            1 for t in all_tasks if t.status == TaskStatus.DOWNLOADING
+                        ),
                         "queued": sum(1 for t in all_tasks if t.status == TaskStatus.QUEUED),
                         "completed": sum(1 for t in all_tasks if t.status == TaskStatus.COMPLETED),
                         "paused": sum(1 for t in all_tasks if t.status == TaskStatus.PAUSED),
                         "failed": sum(1 for t in all_tasks if t.status == TaskStatus.FAILED),
                         "anime": sum(1 for t in all_tasks if t.download_mode.value == "full"),
                         "video": sum(1 for t in all_tasks if t.download_mode.value == "video_only"),
-                        "subtitle": sum(1 for t in all_tasks if t.download_mode.value == "sub_only"),
+                        "subtitle": sum(
+                            1 for t in all_tasks if t.download_mode.value == "sub_only"
+                        ),
                     }
                     _TASKS_CACHE["timestamp"] = now
                     _TASKS_CACHE["all_tasks"] = all_tasks
@@ -223,10 +238,14 @@ class TeamTrauAPIHandler(SimpleHTTPRequestHandler):
             if status_filter != "all":
                 filtered_tasks = [t for t in filtered_tasks if t.status.value == status_filter]
             if category_filter != "all":
-                filtered_tasks = [t for t in filtered_tasks if t.download_mode.value == category_filter]
+                filtered_tasks = [
+                    t for t in filtered_tasks if t.download_mode.value == category_filter
+                ]
             if search_query:
                 sq = search_query.lower()
-                filtered_tasks = [t for t in filtered_tasks if sq in t.anime_title.lower() or sq in t.site.lower()]
+                filtered_tasks = [
+                    t for t in filtered_tasks if sq in t.anime_title.lower() or sq in t.site.lower()
+                ]
 
             self.send_json(
                 {
@@ -252,6 +271,25 @@ class TeamTrauAPIHandler(SimpleHTTPRequestHandler):
             category = query_params.get("category", ["all"])[0]
             logs = manager_logger.get_system_logs(level_filter=level, category_filter=category)
             self.send_json({"success": True, "logs": logs})
+            return
+
+        # GET /api/history (High-scale paginated completed batch history)
+        if path == "/api/history":
+            try:
+                limit = int(query_params.get("limit", [100])[0])
+                offset = int(query_params.get("offset", [0])[0])
+            except ValueError:
+                limit, offset = 100, 0
+            db = DatabaseManager()
+            history_tasks = db.get_completed_tasks_history(limit=limit, offset=offset)
+            self.send_json(
+                {
+                    "success": True,
+                    "history": [t.to_dict() for t in history_tasks],
+                    "limit": limit,
+                    "offset": offset,
+                }
+            )
             return
 
         # Legacy /api/status endpoint
@@ -352,13 +390,17 @@ class TeamTrauAPIHandler(SimpleHTTPRequestHandler):
                 current_settings["delaySec"] = float(delay_sec)
             if naming_format:
                 current_settings["namingFormat"] = naming_format
+            if "autoDetectClipboard" in payload:
+                current_settings["autoDetectClipboard"] = bool(payload["autoDetectClipboard"])
 
             save_app_settings(current_settings)
             invalidate_tasks_cache()
             self.send_json({"success": True, "config": current_settings})
         elif path == "/api/choose-folder":
             initial_dir = payload.get("defaultPath", "")
-            resolved = str(Path(initial_dir).resolve()) if initial_dir else str(Path.home() / "Downloads")
+            resolved = (
+                str(Path(initial_dir).resolve()) if initial_dir else str(Path.home() / "Downloads")
+            )
             selected = ""
             try:
                 import tkinter as tk
@@ -367,7 +409,9 @@ class TeamTrauAPIHandler(SimpleHTTPRequestHandler):
                 root = tk.Tk()
                 root.withdraw()
                 root.attributes("-topmost", True)
-                selected = filedialog.askdirectory(initialdir=resolved, title="Chọn thư mục tải xuống")
+                selected = filedialog.askdirectory(
+                    initialdir=resolved, title="Chọn thư mục tải xuống"
+                )
                 root.destroy()
             except Exception as e:
                 manager_logger.log("error", "general", f"Lỗi chọn thư mục: {e}")
@@ -542,20 +586,25 @@ class TeamTrauAPIHandler(SimpleHTTPRequestHandler):
         elif mode_str == "video_only":
             mode = DownloadMode.VIDEO_ONLY
 
-        created_tasks = []
+        task_specs = []
         for ep_num in episodes:
-            save_path = str(Path(output_dir) / title / f"{title} - S01E{str(ep_num).zfill(2)}.mp4")
-            task = queue_manager.add_task(
-                url=url,
-                anime_title=title,
-                episode_num=str(ep_num),
-                site=site,
-                quality=quality,
-                download_mode=mode,
-                target_sub_langs=target_subs,
-                save_path=save_path,
+            ep_str = str(ep_num).zfill(2)
+            save_path = str(Path(output_dir) / title / "Season 01" / f"{title} - S01E{ep_str}.mp4")
+            task_specs.append(
+                {
+                    "url": url,
+                    "anime_title": title,
+                    "episode_num": str(ep_num),
+                    "site": site,
+                    "quality": quality,
+                    "download_mode": mode,
+                    "target_sub_langs": target_subs,
+                    "save_path": save_path,
+                }
             )
-            created_tasks.append(task.to_dict())
+
+        created_records = queue_manager.add_tasks_batch(task_specs)
+        created_tasks = [r.to_dict() for r in created_records]
 
         invalidate_tasks_cache()
         self.send_json(

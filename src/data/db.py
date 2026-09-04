@@ -1,27 +1,36 @@
 import json
 import sqlite3
+import sys
 import threading
 from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
+from typing import ClassVar
 
 from data.models import DownloadMode, DownloadTaskRecord, TaskLogEntry, TaskStatus
 
-DEFAULT_DB_PATH = Path("app_data/sessions.db")
+if getattr(sys, "frozen", False):
+    PROJECT_ROOT = Path(sys.executable).resolve().parent
+else:
+    PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+
+DEFAULT_DB_PATH = PROJECT_ROOT / "app_data" / "sessions.db"
 
 
 class DatabaseManager:
     """Thread-safe SQLite Database Manager for Download Manager sessions."""
 
-    _instance = None
+    _instances: ClassVar[dict[str, "DatabaseManager"]] = {}
     _lock = threading.Lock()
 
     def __new__(cls, db_path: str | Path = DEFAULT_DB_PATH):
+        resolved_path = str(Path(db_path).resolve())
         with cls._lock:
-            if cls._instance is None:
-                cls._instance = super().__new__(cls)
-                cls._instance._initialized = False
-            return cls._instance
+            if resolved_path not in cls._instances:
+                instance = super().__new__(cls)
+                instance._initialized = False
+                cls._instances[resolved_path] = instance
+            return cls._instances[resolved_path]
 
     def __init__(self, db_path: str | Path = DEFAULT_DB_PATH):
         if getattr(self, "_initialized", False):
@@ -95,13 +104,21 @@ class DatabaseManager:
                 );
             """)
 
-            # Indices for rapid querying
+            # Indices for rapid querying & high-scale batch operations
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks (status);")
             cursor.execute(
                 "CREATE INDEX IF NOT EXISTS idx_tasks_created ON tasks (created_at DESC);"
             )
             cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_tasks_queue_lookup ON tasks (status, priority DESC, created_at DESC);"
+            )
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_tasks_title ON tasks (anime_title);")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_tasks_mode ON tasks (download_mode);")
+            cursor.execute(
                 "CREATE INDEX IF NOT EXISTS idx_task_logs_task_id ON task_logs (task_id);"
+            )
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_task_logs_lookup ON task_logs (task_id, timestamp ASC);"
             )
 
             conn.commit()
@@ -172,6 +189,69 @@ class DatabaseManager:
                     task.completed_at,
                 ),
             )
+            conn.commit()
+
+    def upsert_tasks_batch(self, tasks: list[DownloadTaskRecord]) -> None:
+        """Efficient atomic batch insertion/update for dozens to hundreds of tasks."""
+        if not tasks:
+            return
+
+        stmt = """
+            INSERT INTO tasks (
+                id, url, anime_title, episode_num, site, quality,
+                download_mode, target_sub_langs, save_path, file_size_bytes,
+                downloaded_bytes, total_segments, downloaded_segments,
+                status, speed_bytes_per_sec, eta_seconds, priority,
+                error_message, created_at, completed_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                url = excluded.url,
+                anime_title = excluded.anime_title,
+                episode_num = excluded.episode_num,
+                site = excluded.site,
+                quality = excluded.quality,
+                download_mode = excluded.download_mode,
+                target_sub_langs = excluded.target_sub_langs,
+                save_path = excluded.save_path,
+                file_size_bytes = excluded.file_size_bytes,
+                downloaded_bytes = excluded.downloaded_bytes,
+                total_segments = excluded.total_segments,
+                downloaded_segments = excluded.downloaded_segments,
+                status = excluded.status,
+                speed_bytes_per_sec = excluded.speed_bytes_per_sec,
+                eta_seconds = excluded.eta_seconds,
+                priority = excluded.priority,
+                error_message = excluded.error_message,
+                completed_at = excluded.completed_at;
+        """
+        records_params = [
+            (
+                t.id,
+                t.url,
+                t.anime_title,
+                t.episode_num,
+                t.site,
+                t.quality,
+                t.download_mode.value,
+                json.dumps(t.target_sub_langs),
+                t.save_path,
+                t.file_size_bytes,
+                t.downloaded_bytes,
+                t.total_segments,
+                t.downloaded_segments,
+                t.status.value,
+                t.speed_bytes_per_sec,
+                t.eta_seconds,
+                t.priority,
+                t.error_message,
+                t.created_at,
+                t.completed_at,
+            )
+            for t in tasks
+        ]
+        with self._db_lock, self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.executemany(stmt, records_params)
             conn.commit()
 
     def get_task(self, task_id: str) -> DownloadTaskRecord | None:
@@ -264,8 +344,9 @@ class DatabaseManager:
         status: TaskStatus,
         error_message: str | None = None,
         completed_at: float | None = None,
+        save_path: str | None = None,
     ) -> None:
-        """Update status and optional completion timestamp/error."""
+        """Update status and optional completion timestamp/error/save_path."""
         with self._db_lock, self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
@@ -274,6 +355,7 @@ class DatabaseManager:
                     status = ?,
                     error_message = ?,
                     completed_at = COALESCE(?, completed_at),
+                    save_path = COALESCE(?, save_path),
                     speed_bytes_per_sec = CASE WHEN ? IN ('paused', 'completed', 'failed', 'cancelled') THEN 0.0 ELSE speed_bytes_per_sec END,
                     eta_seconds = CASE WHEN ? IN ('paused', 'completed', 'failed', 'cancelled') THEN 0 ELSE eta_seconds END
                 WHERE id = ?
@@ -282,6 +364,7 @@ class DatabaseManager:
                     status.value,
                     error_message,
                     completed_at,
+                    save_path,
                     status.value,
                     status.value,
                     task_id,
@@ -348,6 +431,50 @@ class DatabaseManager:
                 )
                 for row in rows
             ]
+
+    def prune_task_logs(self, max_logs_per_task: int = 150) -> int:
+        """Prune older task logs to keep database size compact and queries fast."""
+        with self._db_lock, self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                DELETE FROM task_logs
+                WHERE id IN (
+                    SELECT id FROM (
+                        SELECT id,
+                               ROW_NUMBER() OVER (PARTITION BY task_id ORDER BY timestamp DESC) as rn
+                        FROM task_logs
+                    ) WHERE rn > ?
+                )
+            """,
+                (max_logs_per_task,),
+            )
+            deleted_count = cursor.rowcount
+            conn.commit()
+            return deleted_count
+
+    def checkpoint_wal(self) -> None:
+        """Run passive WAL checkpoint to truncate WAL log safely without locking readers."""
+        with self._db_lock, self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("PRAGMA wal_checkpoint(PASSIVE);")
+            conn.commit()
+
+    def get_completed_tasks_history(
+        self, limit: int = 100, offset: int = 0
+    ) -> list[DownloadTaskRecord]:
+        """Fetch paginated completed tasks history sorted by completion date."""
+        query = """
+            SELECT * FROM tasks
+            WHERE status = ?
+            ORDER BY completed_at DESC, created_at DESC
+            LIMIT ? OFFSET ?
+        """
+        with self._db_lock, self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(query, (TaskStatus.COMPLETED.value, limit, offset))
+            rows = cursor.fetchall()
+            return [self._row_to_task(row) for row in rows]
 
     def _row_to_task(self, row: sqlite3.Row) -> DownloadTaskRecord:
         """Convert a database row into a strict DownloadTaskRecord instance."""

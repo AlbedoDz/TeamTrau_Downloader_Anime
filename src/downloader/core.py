@@ -104,7 +104,7 @@ def resolve_sub_lang_tag(track_label: str, default_lang: str) -> str:
 
     # Fallback mapping based on default_lang
     def_lower = default_lang.lower()
-    if def_lower in ("es-la", "es-419", "latin america", "latam"):
+    if def_lower in ("es-la", "es-419", "latin america", "latam", "spain latin", "spanish latin", "latin spanish"):
         return "es-LA"
     if def_lower in ("es-es", "spain", "castellano", "esp"):
         return "es-ES"
@@ -132,6 +132,9 @@ def get_target_lang_candidate_tags(target_lang: str) -> list[str]:
         "es-la",
         "latam",
         "latin america",
+        "spain latin",
+        "spanish latin",
+        "latin spanish",
     ):
         return ["es-LA", "es-419", "es"]
     if t_lower in ("en", "eng", "english"):
@@ -782,8 +785,10 @@ class BatchDownloader:
         video_only: bool = False,
         tvdb_id: str | None = None,
         naming_format: str = "simple",
-    ):
+    ) -> dict[str, list[str]]:
         """Scrape anime page and download selected subtitles and videos."""
+        downloaded_result: dict[str, list[str]] = {"videos": [], "subtitles": []}
+
         extractor = get_extractor_for_url(anime_url, self.http)
         if not extractor:
             console.print(f"[error]No extractor found for URL: {anime_url}[/error]", style="red")
@@ -798,14 +803,14 @@ class BatchDownloader:
             console.print(
                 f"[warning]No episodes found for anime: {anime_title}[/warning]", style="yellow"
             )
-            return
+            return downloaded_result
 
         selected_episodes = parse_episode_range(episode_range, episodes)
         if not selected_episodes:
             console.print(
                 f"[warning]No episodes matched range '{episode_range}'[/warning]", style="yellow"
             )
-            return
+            return downloaded_result
 
         console.print(f"[info]Selected {len(selected_episodes)} episodes to download[/info]")
 
@@ -1048,6 +1053,7 @@ class BatchDownloader:
                 skipped_subs += 1
                 sub_success = True
                 sub_skipped_this_ep = True
+                downloaded_result["subtitles"].append(os.path.join(anime_dir, sub_filename_default))
 
             # Check if video already exists
             video_filename = f"{filename_prefix}.mp4"
@@ -1063,6 +1069,7 @@ class BatchDownloader:
                 skipped_vids += 1
                 vid_success = True
                 video_skipped_this_ep = True
+                downloaded_result["videos"].append(video_path)
 
             if not (sub_success and vid_success):
                 # Fetch available servers
@@ -1340,6 +1347,7 @@ class BatchDownloader:
                                             )
                                             successful_subs += 1
                                             current_sub_success = True
+                                            downloaded_result["subtitles"].append(sub_path)
                                             break
                                         else:
                                             raise ValueError("Saved subtitle file is empty")
@@ -1408,6 +1416,7 @@ class BatchDownloader:
                                     )
                                     successful_vids += 1
                                     current_vid_success = True
+                                    downloaded_result["videos"].append(video_path)
                                     break
                                 else:
                                     console.print(
@@ -1468,6 +1477,8 @@ class BatchDownloader:
             console.print("\n[bold red]=== Failed Downloads Summary ===[/bold red]")
             for ep_lbl, item_type, reason in failed_downloads:
                 console.print(f"  - [red]{ep_lbl} ({item_type}): {reason}[/red]")
+
+        return downloaded_result
 
     def _parse_series_and_season(self, title: str, url: str) -> tuple[str, int]:
         """Parse the base series title and season number from the raw title or URL."""

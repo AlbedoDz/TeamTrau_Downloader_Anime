@@ -102,7 +102,17 @@ def test_tasks_api_contract_counts() -> None:
         "subtitle": sum(1 for t in all_tasks if t.download_mode.value == "sub_only"),
     }
 
-    required_keys = ["all", "downloading", "queued", "completed", "paused", "failed", "anime", "video", "subtitle"]
+    required_keys = [
+        "all",
+        "downloading",
+        "queued",
+        "completed",
+        "paused",
+        "failed",
+        "anime",
+        "video",
+        "subtitle",
+    ]
     for key in required_keys:
         assert key in counts, f"Missing count category: {key}"
         assert isinstance(counts[key], int)
@@ -110,8 +120,8 @@ def test_tasks_api_contract_counts() -> None:
 
 def test_config_persistence_contract(tmp_path: Path) -> None:
     """Verify that settings can be loaded and saved to config.json reliably."""
-    from ui.server import load_app_settings, save_app_settings, CONFIG_PATH
     import ui.server as server_module
+    from ui.server import load_app_settings, save_app_settings
 
     # Temporarily point CONFIG_PATH to tmp_path
     original_config_path = server_module.CONFIG_PATH
@@ -129,7 +139,7 @@ def test_config_persistence_contract(tmp_path: Path) -> None:
             "maxWorkers": 5,
             "proxyUrl": "http://127.0.0.1:8888",
             "delaySec": 2.5,
-            "namingFormat": "standard"
+            "namingFormat": "standard",
         }
         save_app_settings(test_settings)
         assert test_config.exists()
@@ -152,3 +162,58 @@ def test_video_preview_path_resolution(tmp_path: Path) -> None:
     assert fake_video.stat().st_size == 1024
 
 
+def test_batch_upsert_and_history_contract(tmp_path: Path) -> None:
+    """Verify upsert_tasks_batch, prune_task_logs, checkpoint_wal, and get_completed_tasks_history."""
+    from data.db import DatabaseManager
+    from data.models import DownloadMode, DownloadTaskRecord, TaskLogEntry, TaskStatus
+
+    test_db_path = tmp_path / "test_session.db"
+    db = DatabaseManager(test_db_path)
+
+    # 1. Batch upsert 20 tasks
+    tasks = [
+        DownloadTaskRecord(
+            id=f"test_task_{i}",
+            url=f"https://all-wish.me/watch/test/ep-{i}",
+            anime_title="Batch Test Anime",
+            episode_num=str(i),
+            site="allwish",
+            quality="720p",
+            download_mode=DownloadMode.FULL,
+            status=TaskStatus.COMPLETED if i % 2 == 0 else TaskStatus.QUEUED,
+            created_at=1000.0 + i,
+            completed_at=2000.0 + i if i % 2 == 0 else None,
+        )
+        for i in range(1, 21)
+    ]
+    db.upsert_tasks_batch(tasks)
+
+    all_stored = db.get_all_tasks(status_filter="all")
+    assert len(all_stored) == 20
+
+    # 2. Paginated history check
+    history = db.get_completed_tasks_history(limit=5, offset=0)
+    assert len(history) == 5
+    assert all(t.status == TaskStatus.COMPLETED for t in history)
+    # Check ordering: highest completed_at first
+    assert history[0].completed_at >= history[1].completed_at
+
+    # 3. Task log prune and checkpoint test
+    for j in range(10):
+        db.add_task_log(
+            TaskLogEntry(
+                id=f"log_{j}",
+                task_id="test_task_1",
+                timestamp=100.0 + j,
+                level="INFO",
+                category="general",
+                message=f"Log {j}",
+            )
+        )
+    pruned = db.prune_task_logs(max_logs_per_task=3)
+    assert pruned == 7
+    remaining_logs = db.get_task_logs("test_task_1")
+    assert len(remaining_logs) == 3
+
+    # 4. WAL Checkpoint execution
+    db.checkpoint_wal()

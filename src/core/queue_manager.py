@@ -84,6 +84,42 @@ class QueueManager:
         )
         return record
 
+    def add_tasks_batch(self, task_specs: list[dict]) -> list[DownloadTaskRecord]:
+        """Create and atomically enqueue multiple download tasks in SQLite database."""
+        if not task_specs:
+            return []
+
+        base_time = time.time()
+        created_records: list[DownloadTaskRecord] = []
+        for i, spec in enumerate(task_specs):
+            ep_num = str(spec.get("episode_num", "1"))
+            task_id = f"task_{int(base_time * 1000) + i}_{ep_num}"
+            title = spec.get("anime_title", "Anime Series")
+            record = DownloadTaskRecord(
+                id=task_id,
+                url=spec.get("url", ""),
+                anime_title=title,
+                episode_num=ep_num,
+                site=spec.get("site", "allwish"),
+                quality=spec.get("quality", "720p"),
+                download_mode=spec.get("download_mode", DownloadMode.FULL),
+                target_sub_langs=spec.get("target_sub_langs") or ["es-LA", "en"],
+                save_path=spec.get("save_path") or f"./downloads/{title}/{title} - E{ep_num}.mp4",
+                status=TaskStatus.QUEUED,
+                priority=spec.get("priority", 0),
+                created_at=base_time + (i * 0.001),
+            )
+            created_records.append(record)
+
+        self.db.upsert_tasks_batch(created_records)
+        self._wake_event.set()
+        manager_logger.log(
+            "info",
+            "general",
+            f"Đã thêm hàng loạt {len(created_records)} tập vào hàng đợi tải.",
+        )
+        return created_records
+
     def pause_task(self, task_id: str) -> bool:
         """Pause an active downloading or queued task."""
         with self._pool_lock:
@@ -228,7 +264,21 @@ class QueueManager:
         try:
             sub_only = task.download_mode == DownloadMode.SUB_ONLY
             video_only = task.download_mode == DownloadMode.VIDEO_ONLY
-            output_dir = str(Path(task.save_path).parent) if task.save_path else "./downloads"
+
+            # Determine base output directory (avoiding double anime title nesting)
+            if task.save_path:
+                p = Path(task.save_path).resolve()
+                # If path has Season XX, parent is Season XX, parent.parent is Anime Title, parent.parent.parent is base
+                if p.parent.name.lower().startswith("season "):
+                    base_output_dir = str(p.parent.parent.parent)
+                elif p.parent.name == task.anime_title:
+                    base_output_dir = str(p.parent.parent)
+                else:
+                    base_output_dir = str(p.parent)
+            else:
+                base_output_dir = "./downloads"
+
+            last_db_progress_time = 0.0
 
             def on_task_progress(
                 downloaded_segs: int,
@@ -237,8 +287,17 @@ class QueueManager:
                 speed: float,
                 eta: int,
             ) -> None:
+                nonlocal last_db_progress_time
                 if stop_event.is_set():
                     return
+
+                now = time.time()
+                is_finished = downloaded_segs >= total_segs and total_segs > 0
+                # Rate limit DB write to at most once per 0.5s or on completion (saves 90% IOPS)
+                if not is_finished and (now - last_db_progress_time < 0.5):
+                    return
+                last_db_progress_time = now
+
                 approx_file_size = (
                     int(downloaded_bytes / (downloaded_segs / total_segs))
                     if downloaded_segs > 0 and total_segs > 0
@@ -258,7 +317,7 @@ class QueueManager:
                 manager_logger.log(level=level, category=category, message=message, task_id=task_id)
 
             downloader = BatchDownloader(
-                output_dir=output_dir,
+                output_dir=base_output_dir,
                 delay_range=(1.0, 2.0),
                 progress_callback=on_task_progress,
                 log_callback=on_task_log,
@@ -266,6 +325,7 @@ class QueueManager:
 
             # Route download execution (multi-sub or standalone sub support)
             target_langs = task.target_sub_langs if task.target_sub_langs else ["es-LA", "en"]
+            last_download_result: dict[str, list[str]] = {"videos": [], "subtitles": []}
             for i, lang_code in enumerate(target_langs):
                 if stop_event.is_set():
                     break
@@ -273,7 +333,7 @@ class QueueManager:
                 current_video_only = video_only
                 current_sub_only = sub_only or (not is_first)
 
-                downloader.download_anime(
+                res = downloader.download_anime(
                     anime_url=task.url,
                     episode_range=task.episode_num,
                     lang=lang_code,
@@ -281,6 +341,9 @@ class QueueManager:
                     video_only=current_video_only,
                     naming_format="simple",
                 )
+                if isinstance(res, dict):
+                    last_download_result["videos"].extend(res.get("videos", []))
+                    last_download_result["subtitles"].extend(res.get("subtitles", []))
 
             if stop_event.is_set():
                 self.db.update_task_status(task_id, TaskStatus.PAUSED)
@@ -288,17 +351,76 @@ class QueueManager:
                     "warn", "general", "Tác vụ đã dừng theo yêu cầu người dùng.", task_id=task_id
                 )
             else:
-                # Update final file size if file exists on disk
+                # Rigorous file verification on disk (Poka-Yoke)
+                target_file_exists = False
                 final_size = 0
-                if task.save_path and Path(task.save_path).exists():
-                    final_size = Path(task.save_path).stat().st_size
-                elif Path(output_dir).exists():
-                    for f in Path(output_dir).glob(f"*{task.episode_num}*.mp4"):
-                        final_size = f.stat().st_size
-                        task.save_path = str(f)
-                        break
+                verified_save_path = None
 
-                if final_size > 0:
+                if sub_only:
+                    # 1. Check direct paths returned by BatchDownloader
+                    for sub_file in reversed(last_download_result.get("subtitles", [])):
+                        sp = Path(sub_file)
+                        if sp.exists() and sp.stat().st_size > 100:
+                            target_file_exists = True
+                            final_size = sp.stat().st_size
+                            verified_save_path = str(sp.resolve())
+                            break
+
+                    # 2. Fallback recursive search in base_output_dir
+                    if not target_file_exists and Path(base_output_dir).exists():
+                        ep_clean = task.episode_num.zfill(2)
+                        for sub_ext in ("*.srt", "*.vtt", "*.ass"):
+                            for f in Path(base_output_dir).rglob(f"*{ep_clean}*{sub_ext}"):
+                                if f.stat().st_size > 100:
+                                    target_file_exists = True
+                                    final_size = f.stat().st_size
+                                    verified_save_path = str(f.resolve())
+                                    break
+                            if target_file_exists:
+                                break
+                else:
+                    # 1. Check direct paths returned by BatchDownloader
+                    for vid_file in reversed(last_download_result.get("videos", [])):
+                        vp = Path(vid_file)
+                        if vp.exists() and vp.stat().st_size > 1024 * 1024:
+                            target_file_exists = True
+                            final_size = vp.stat().st_size
+                            verified_save_path = str(vp.resolve())
+                            break
+
+                    # 2. Check task.save_path if it directly exists
+                    if not target_file_exists and task.save_path and Path(task.save_path).exists():
+                        sz = Path(task.save_path).stat().st_size
+                        if sz > 1024 * 1024:
+                            target_file_exists = True
+                            final_size = sz
+                            verified_save_path = str(Path(task.save_path).resolve())
+
+                    # 3. Fallback recursive search in base_output_dir
+                    if not target_file_exists and Path(base_output_dir).exists():
+                        ep_clean = task.episode_num.zfill(2)
+                        for ext in ("*.mp4", "*.mkv"):
+                            for f in Path(base_output_dir).rglob(f"*{ep_clean}*{ext}"):
+                                sz = f.stat().st_size
+                                if sz > 1024 * 1024:
+                                    target_file_exists = True
+                                    final_size = sz
+                                    verified_save_path = str(f.resolve())
+                                    break
+                            if target_file_exists:
+                                break
+
+                if not target_file_exists or final_size == 0 or not verified_save_path:
+                    err_msg = "Không tìm thấy file tải về hợp lệ hoặc file rỗng (0 bytes)."
+                    self.db.update_task_status(task_id, TaskStatus.FAILED, error_message=err_msg)
+                    manager_logger.log(
+                        "error",
+                        "general",
+                        f"Tải thất bại tập {task.episode_num}: {err_msg}",
+                        task_id=task_id,
+                    )
+                else:
+                    task.save_path = verified_save_path
                     self.db.update_task_progress(
                         task_id=task_id,
                         downloaded_bytes=final_size,
@@ -308,14 +430,18 @@ class QueueManager:
                         speed_bytes_per_sec=0.0,
                         eta_seconds=0,
                     )
-
-                self.db.update_task_status(task_id, TaskStatus.COMPLETED, completed_at=time.time())
-                manager_logger.log(
-                    "success",
-                    "m3u8_stream",
-                    f"Tải hoàn tất: {task.anime_title} Tập {task.episode_num}",
-                    task_id=task_id,
-                )
+                    self.db.update_task_status(
+                        task_id,
+                        TaskStatus.COMPLETED,
+                        completed_at=time.time(),
+                        save_path=verified_save_path,
+                    )
+                    manager_logger.log(
+                        "success",
+                        "m3u8_stream",
+                        f"Tải hoàn tất: {task.anime_title} Tập {task.episode_num}",
+                        task_id=task_id,
+                    )
 
         except Exception as e:
             if stop_event.is_set():
